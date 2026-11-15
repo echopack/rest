@@ -1,0 +1,19 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+
+/**
+ * The front page digest, built from a plain struct rather than a model.
+ */
+#[rest::model: 'digest']
+#[rest::from: 'blog::Digest']
+public struct DigestResource
+{
+    public string $headline;
+    public int64 $published;
+
+    #[rest::item: 'post']
+    public rest::Include<array<PostResource>> $latest;
+
+    public rest::Include<UserResource> $editor;
+}

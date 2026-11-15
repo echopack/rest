@@ -1,0 +1,185 @@
+/**
+ * A hand-written stand-in for what restgen generates: two resources that
+ * nest each other, their encoders and their mapping interfaces, so the
+ * library is tested without the generator.
+ */
+
+namespace pets;
+
+use EchoPack::Rest as rest;
+
+internal class Owner
+{
+    internal int64 $id;
+    internal string $name;
+    internal rest::Resolved<array<Pet>> $pets = .unresolved();
+
+    internal constructor(int64 $id, string $name)
+    {
+        $this->id = $id;
+        $this->name = $name;
+    }
+}
+
+internal struct Pet
+{
+    internal int64 $id;
+    internal string $name;
+    internal rest::Resolved<Owner> $owner = .unresolved();
+}
+
+internal struct PetResource
+{
+    internal int64 $id;
+    internal string $name;
+    internal string $shout;
+    internal rest::Include<int64> $letters;
+    internal rest::Include<OwnerResource> $owner;
+}
+
+internal struct OwnerResource
+{
+    internal int64 $id;
+    internal string $name;
+    internal rest::Include<array<PetResource>> $pets;
+}
+
+internal interface PetResourceMapping
+{
+    function shout(const Pet& $s, rest::Context& $ctx) : string;
+    function letters(const Pet& $s, rest::Context& $ctx) : int64;
+
+    function transform(const Pet& $s, rest::Context& $ctx) : PetResource
+    {
+        rest::Include<int64> $letters = .absent();
+        if ($ctx->wants('letters')) {
+            $letters = .of($this->letters($s, $ctx));
+        }
+        rest::Include<OwnerResource> $owner = .absent();
+        if ($s->owner->loaded() && $ctx->wants('owner') && $ctx->enter('owner')) {
+            $owner = .none();
+            Owner? $o = $s->owner->get();
+            if ($o != null) {
+                Owner $present = guard $o;
+                $owner = .of($ctx->transformers->get<OwnerResourceMapping>()->transform($present, $ctx));
+            }
+            $ctx->leave();
+        }
+        PetResource $r = PetResource(
+            $id: $s->id,
+            $name: $s->name,
+            $shout: $this->shout($s, $ctx),
+            $letters: $letters,
+            $owner: $owner
+        );
+        $this->refine($r, $s, $ctx);
+        return $r;
+    }
+
+    function many(const array<Pet>& $s, rest::Context& $ctx) : array<PetResource>
+    {
+        array<PetResource> $out = [];
+        foreach ($s as const &$one) {
+            $out[] = $this->transform($one, $ctx);
+        }
+        return $out;
+    }
+
+    function refine(PetResource& $r, const Pet& $s, rest::Context& $ctx) : void
+    {
+    }
+}
+
+internal interface OwnerResourceMapping
+{
+    function transform(const Owner& $s, rest::Context& $ctx) : OwnerResource
+    {
+        rest::Include<array<PetResource>> $pets = .absent();
+        if ($s->pets->loaded() && $ctx->wants('pets') && $ctx->enter('pets')) {
+            array<Pet> $none = [];
+            array<Pet> $all = $s->pets->get() ?? $none;
+            $pets = .of($ctx->transformers->get<PetResourceMapping>()->many($all, $ctx));
+            $ctx->leave();
+        }
+        return OwnerResource($id: $s->id, $name: $s->name, $pets: $pets);
+    }
+}
+
+#[atomic]
+internal class PetTransformer : PetResourceMapping
+{
+    internal function shout(const Pet& $s, rest::Context& $ctx) : string
+    {
+        Loud? $loud = $ctx->find<Loud>();
+        if ($loud == null) {
+            return $s->name;
+        }
+        return str::upper($s->name);
+    }
+
+    internal function letters(const Pet& $s, rest::Context& $ctx) : int64
+    {
+        return $s->name->size() as int64;
+    }
+
+    internal function refine(PetResource& $r, const Pet& $s, rest::Context& $ctx) : void
+    {
+        if ($s->id == 0) {
+            $r->name = 'nameless';
+        }
+    }
+}
+
+#[atomic]
+internal class OwnerTransformer : OwnerResourceMapping
+{
+}
+
+/**
+ * A request value: shout the names.
+ */
+internal class Loud
+{
+}
+
+namespace EchoPack::Rest;
+
+internal function encode<D : Driver>(const pets::PetResource& $m, D& $d) : void
+{
+    $d->open('pet');
+    $d->attribute('id');
+    $d->int($m->id);
+    $d->key('name');
+    $d->str($m->name);
+    $d->key('shout');
+    $d->str($m->shout);
+    if ($m->letters->present()) {
+        $d->key('letters');
+        encode($m->letters, $d);
+    }
+    if ($m->owner->present()) {
+        $d->key('owner');
+        encode($m->owner, $d);
+    }
+    $d->close();
+}
+
+internal function encode<D : Driver>(const pets::OwnerResource& $m, D& $d) : void
+{
+    $d->open('owner');
+    $d->key('id');
+    $d->int($m->id);
+    $d->key('name');
+    $d->str($m->name);
+    if ($m->pets->present()) {
+        $d->key('pets');
+        $d->list('pet');
+        array<pets::PetResource> $none = [];
+        array<pets::PetResource> $all = $m->pets->get() ?? $none;
+        foreach ($all as const &$i1) {
+            encode($i1, $d);
+        }
+        $d->close();
+    }
+    $d->close();
+}

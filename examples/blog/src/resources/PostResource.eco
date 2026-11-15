@@ -1,0 +1,37 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+use std::time;
+
+/**
+ * A post as the API shows it: its author and comments once loaded, an
+ * excerpt always, and statistics when the request asks for `stats`.
+ */
+#[rest::model: 'post']
+#[rest::from: 'blog::Post']
+public struct PostResource
+{
+    #[rest::attribute]
+    public int64 $id;
+
+    public string $title;
+
+    #[rest::computed]
+    public string $excerpt;
+
+    public Status $status;
+
+    #[rest::item: 'tag']
+    public array<string> $tags;
+
+    #[rest::time: zulu]
+    public time::timestamp? $createdAt;
+
+    public rest::Include<UserResource> $author;
+
+    #[rest::item: 'comment']
+    public rest::Include<array<CommentResource>> $comments;
+
+    #[rest::computed]
+    public rest::Include<StatsResource> $stats;
+}

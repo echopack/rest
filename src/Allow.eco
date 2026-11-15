@@ -1,0 +1,114 @@
+namespace EchoPack::Rest;
+
+/**
+ * What an endpoint lets a request include, and what it always includes.
+ * The action resolves exactly what `parse` hands back, so the list here is
+ * also the list of loads the action knows how to do.
+ *
+ * ```echo
+ * rest::Allow $allow = rest::Allow::of(['author', 'comments.author'])->always(['author']);
+ * rest::Includes $inc = guard $allow->parse($req->query->get('include') ?? '') else ($e) {
+ *     return rest::Problem::of($e)->response();
+ * };
+ * ```
+ */
+public struct Allow
+{
+    private Includes $allowed;
+    private Includes $always;
+
+    public constructor()
+    {
+        $this->allowed = Includes();
+        $this->always = Includes();
+    }
+
+    /**
+     * Allow these paths. Allowing `comments.author` allows `comments`.
+     */
+    public static function of(const array<string>& $paths) : Allow
+    {
+        Allow $out = Allow();
+        $out->allowed = Includes::of($paths);
+        return $out;
+    }
+
+    /**
+     * A copy that includes these paths whether the request asks or not, and
+     * so allows them too.
+     */
+    public const function always(const array<string>& $paths) : Allow
+    {
+        Allow $out = $this;
+        Includes $more = Includes::of($paths);
+        $out->always->merge($more);
+        $out->allowed->merge($more);
+        return $out;
+    }
+
+    public const function allows(const string& $path) : bool
+    {
+        return $this->allowed->has($path);
+    }
+
+    /**
+     * Read an include list, `author, comments.author`: comma separated
+     * paths of dot separated keys, blanks around a path ignored. A path that
+     * is not allowed or not spelled as keys is refused with the path.
+     */
+    public const function parse(const string& $text) : result<Includes, Error>
+    {
+        Includes $out = Includes();
+        foreach (str::split($text, ',') as const &$raw) {
+            string $path = string::from(str::trim($raw));
+            if ($path->empty()) {
+                continue;
+            }
+            if (!Allow::spelled($path)) {
+                return .error(.malformed($path));
+            }
+            if (!$this->allowed->has($path)) {
+                return .error(.unknown($path));
+            }
+            $out->add($path);
+        }
+        $out->merge($this->always);
+        return .ok($out);
+    }
+
+    /**
+     * `parse` on the request's `?include=` parameter, absent meaning none.
+     */
+    public const function parse(const http::Request& $req) : result<Includes, Error>
+    {
+        return $this->parse($req->query->get('include') ?? '');
+    }
+
+    /**
+     * Keys of letters, digits, `_` and `-`, joined by single dots.
+     */
+    private static function spelled(const string& $path) : bool
+    {
+        bool $start = true;
+        usize $i = 0;
+        usize $n = $path->size();
+        while ($i < $n) {
+            uint8 $b = $path->byte($i);
+            if ($b == 46) {
+                if ($start) {
+                    return false;
+                }
+                $start = true;
+            } else {
+                bool $letter = ($b >= 65 && $b <= 90) || ($b >= 97 && $b <= 122);
+                bool $digit = $b >= 48 && $b <= 57;
+                if (!$letter && !$digit && $b != 95 && $b != 45) {
+                    return false;
+                }
+                $start = false;
+            }
+            $i = $i + 1;
+        }
+        return !$start;
+    }
+}

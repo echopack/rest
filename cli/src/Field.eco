@@ -1,0 +1,96 @@
+namespace restgen;
+
+/**
+ * One field of a resource: how it is written, and for a resource with
+ * #[rest::from] how its mapping fills it.
+ */
+public class Field
+{
+    public string $name;
+    public string $key;
+    public Ty $ty;
+    public bool $attribute = false;
+    public bool $optional = false;
+    public bool $wrap = false;
+    public bool $skip = false;
+    public string $item = '';
+
+    /**
+     * #[rest::time]: how a `time::timestamp` is written, empty for the
+     * default.
+     */
+    public string $stamp = '';
+
+    /**
+     * #[rest::computed]: the mapping asks its transformer for the value.
+     */
+    public bool $computed = false;
+
+    /**
+     * The include name a computed `rest::Include` field waits for, empty
+     * when the field is computed every time.
+     */
+    public string $include = '';
+
+    /**
+     * #[rest::source]: the source field to fill from, when not the same
+     * name.
+     */
+    public string $source = '';
+
+    /**
+     * Whether the field has a default, so the mapping may leave it out.
+     */
+    public bool $defaulted = false;
+
+    /**
+     * The decls type tree, for comparing with a source field's.
+     */
+    public json::Value $decl = json::nil();
+
+    /**
+     * The source field the mapping fills this one from, empty when it is
+     * computed, skipped, or the resource has no #[rest::from].
+     */
+    public string $from = '';
+    public Access $access = Access::plain;
+    public Conv $conv = Conv::copy;
+
+    /**
+     * For a nested resource: the mapping interface of the resource built.
+     */
+    public string $mapping = '';
+
+    /**
+     * For a `rest::Resolved<array<S>>` source: how `array<S>` is spelled.
+     */
+    public string $sourceSpell = '';
+
+    /**
+     * The type `Include<T>` wraps, or the type itself.
+     */
+    public const function inner() : Ty
+    {
+        if ($this->ty->kind == Kind::include) {
+            return $this->ty->element();
+        }
+        return $this->ty;
+    }
+
+    /**
+     * Whether the library's `encode(Include)` writes this include as the
+     * generated code would: a resource, or a list of resources whose
+     * elements name themselves.
+     */
+    public const function whole() : bool
+    {
+        if ($this->ty->kind != Kind::include || !$this->item->empty()) {
+            return false;
+        }
+        Ty $inner = $this->inner();
+        if ($inner->kind == Kind::list) {
+            return $inner->element()->kind == Kind::model;
+        }
+        return $inner->kind == Kind::model;
+    }
+}

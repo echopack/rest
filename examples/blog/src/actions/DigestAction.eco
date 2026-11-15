@@ -1,0 +1,61 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+
+/**
+ * `GET /digest`: the front page, a plain struct. `?include=latest` adds
+ * the three newest posts (`latest.author` their authors), `editor` the
+ * author of the newest one.
+ */
+#[atomic]
+public class DigestAction : Action
+{
+    public carbon::DB $db;
+    public rest::Transformers $transformers;
+    private rest::Allow $allow;
+
+    public constructor(carbon::DB $db, rest::Transformers $transformers)
+    {
+        $this->db = $db;
+        $this->transformers = $transformers;
+        $this->allow = rest::Allow::of(['latest.author', 'editor']);
+    }
+
+    public function handle(http::Request $req) : http::Response
+    {
+        rest::Includes $inc = guard $this->allow->parse($req) else ($e) {
+            return rest::Problem::of($e)->response();
+        };
+
+        carbon::Session $session = $this->db->scoped();
+        PostRepository $posts = guard $session->repo<PostRepository>();
+        uint64 $count = guard $posts->published()->count() else ($e) {
+            return Failure::storage($e);
+        };
+        Digest $digest = Digest($headline: 'This week on the blog', $published: $count as int64);
+
+        if ($inc->has('latest') || $inc->has('editor')) {
+            PostQuery $query = $posts->published()->limit(3);
+            if ($inc->has('latest.author') || $inc->has('editor')) {
+                $query = $query->withAuthor();
+            }
+            array<Post> $latest = guard $query->get() else ($e) {
+                return Failure::storage($e);
+            };
+            if ($inc->has('editor')) {
+                User? $editor = null;
+                if (!$latest->empty()) {
+                    $editor = $latest[0]->author->get();
+                }
+                $digest->editor->set($editor);
+            }
+            if ($inc->has('latest')) {
+                $digest->latest->set($latest);
+            }
+        }
+
+        rest::Context $ctx = rest::Context($this->transformers, $inc);
+        $doc = rest::item($this->transformers->get<DigestResourceMapping>()->transform($digest, $ctx));
+        return $doc->response(rest::Format::negotiate($req));
+    }
+}

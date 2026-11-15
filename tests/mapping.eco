@@ -1,0 +1,97 @@
+use EchoPack::Rest as rest;
+
+/**
+ * Rex and his owner Mario, whose pets are Tom and a Rex loaded without his
+ * owner, the way a second query would load them.
+ */
+internal function rexAndOwner() : pets::Pet
+{
+    pets::Owner $mario = pets::Owner(7, 'Mario');
+    pets::Pet $rex = pets::Pet($id: 1, $name: 'Rex');
+    // a literal straight into the T? parameter crashes echoc 0.12.2's codegen
+    array<pets::Pet> $both = [pets::Pet($id: 2, $name: 'Tom'), $rex];
+    $mario->pets->set($both);
+    $rex->owner->set($mario);
+    return $rex;
+}
+
+#[group: "unit"]
+test mapping_leaves_unresolved_relations_out {
+    rest::Context $ctx = rest::Context(registry(), rest::Includes::of(['owner']));
+    pets::Pet $rex = pets::Pet($id: 1, $name: 'Rex');
+    pets::PetResource $r = registry()->get<pets::PetResourceMapping>()->transform($rex, $ctx);
+    assert(rest::item($r)->json() == '{"data":{"id":1,"name":"Rex","shout":"Rex"}}', 'no owner key');
+}
+
+#[group: "unit"]
+test mapping_writes_a_resolved_null_as_null {
+    rest::Context $ctx = rest::Context(registry(), rest::Includes::of(['owner']));
+    pets::Pet $rex = pets::Pet($id: 1, $name: 'Rex');
+    pets::Owner? $nobody = null;
+    $rex->owner->set($nobody);
+    pets::PetResource $r = registry()->get<pets::PetResourceMapping>()->transform($rex, $ctx);
+    assert(rest::item($r)->json() == '{"data":{"id":1,"name":"Rex","shout":"Rex","owner":null}}', 'owner null');
+}
+
+#[group: "unit"]
+test mapping_nests_through_the_registry {
+    rest::Transformers $t = registry();
+    rest::Context $ctx = rest::Context($t, rest::Includes::of(['letters', 'owner.pets.letters']));
+    // owner.pets.letters asks for the owner and the owner's pets too
+    $ctx->put(pets::Loud());
+    array<pets::Pet> $one = [rexAndOwner()];
+    array<pets::PetResource> $out = $t->get<pets::PetResourceMapping>()->many($one, $ctx);
+    string $want = '{"data":[{"id":1,"name":"Rex","shout":"REX","letters":3,"owner":{"id":7,"name":"Mario","pets":[{"id":2,"name":"Tom","shout":"TOM","letters":3},{"id":1,"name":"Rex","shout":"REX","letters":3}]}}]}';
+    assert(rest::collection($out)->json() == $want, 'nested');
+    assert($ctx->depth() == 0, 'left every level');
+}
+
+#[group: "unit"]
+test mapping_computes_optional_fields_only_on_request {
+    rest::Transformers $t = registry();
+    rest::Context $ctx = rest::Context($t, rest::Includes::of(['owner.pets.letters']));
+    pets::PetResource $r = $t->get<pets::PetResourceMapping>()->transform(rexAndOwner(), $ctx);
+    assert($r->letters->present() == false, 'not at the top');
+    string $json = rest::item($r)->json();
+    assert($json->starts('{"data":{"id":1,"name":"Rex","shout":"Rex","owner":'), 'top has no letters');
+    assert($json->contains('{"id":2,"name":"Tom","shout":"Tom","letters":3}'), 'nested has letters');
+}
+
+#[group: "unit"]
+test mapping_refines_after_mapping {
+    rest::Context $ctx = rest::Context(registry());
+    pets::PetResource $r = registry()->get<pets::PetResourceMapping>()->transform(pets::Pet($id: 0, $name: 'x'), $ctx);
+    assert($r->name == 'nameless', 'refined');
+}
+
+#[group: "unit"]
+test mapping_leaves_out_what_was_loaded_but_not_asked_for {
+    rest::Transformers $t = registry();
+    rest::Context $ctx = rest::Context($t, rest::Includes::of(['owner']));
+    pets::PetResource $r = $t->get<pets::PetResourceMapping>()->transform(rexAndOwner(), $ctx);
+    assert(rest::item($r)->json() == '{"data":{"id":1,"name":"Rex","shout":"Rex","owner":{"id":7,"name":"Mario"}}}', 'pets loaded, not asked');
+}
+
+#[group: "unit"]
+test mapping_xml_names_nested_lists {
+    rest::Transformers $t = registry();
+    rest::Context $ctx = rest::Context($t, rest::Includes::of(['owner.pets']));
+    pets::PetResource $r = $t->get<pets::PetResourceMapping>()->transform(rexAndOwner(), $ctx);
+    assert(rest::item($r)->xml() == '<?xml version="1.0" encoding="UTF-8"?><response><data id="1"><name>Rex</name><shout>Rex</shout><owner><id>7</id><name>Mario</name><pets><pet id="2"><name>Tom</name><shout>Tom</shout></pet><pet id="1"><name>Rex</name><shout>Rex</shout></pet></pets></owner></data></response>', 'xml');
+}
+
+#[group: "unit"]
+test mapping_stops_a_cycle_at_the_limit {
+    pets::Owner $mario = pets::Owner(7, 'Mario');
+    pets::Pet $rex = pets::Pet($id: 1, $name: 'Rex');
+    $rex->owner->set($mario);
+    // rex's copy in the list carries mario again: a cycle through the class
+    array<pets::Pet> $one = [$rex];
+    $mario->pets->set($one);
+    rest::Transformers $t = registry();
+    rest::Context $ctx = rest::Context($t, rest::Includes::of(['owner.pets.owner.pets']), $limit: 3);
+    pets::PetResource $r = $t->get<pets::PetResourceMapping>()->transform($rex, $ctx);
+    string $want = '{"data":{"id":1,"name":"Rex","shout":"Rex","owner":{"id":7,"name":"Mario","pets":[{"id":1,"name":"Rex","shout":"Rex","owner":{"id":7,"name":"Mario"}}]}}}';
+    assert(rest::item($r)->json() == $want, 'three levels, then nothing');
+    assert($ctx->depth() == 0, 'left every level');
+}

@@ -1,0 +1,77 @@
+use EchoPack::Rest as rest;
+
+internal function sample(rest::XmlDriver& $d) : void
+{
+    $d->open('user');
+    $d->attribute('id');
+    $d->int(7);
+    $d->key('name');
+    $d->str('<Mario & "co">');
+    $d->key('tags');
+    $d->list('tag');
+    $d->str('echo');
+    $d->str('xml');
+    $d->close();
+    $d->key('avatar');
+    $d->nil();
+    $d->key('team');
+    $d->open('team');
+    $d->key('title');
+    $d->str('Core');
+    $d->close();
+    $d->close();
+}
+
+#[group: "unit"]
+test xml_compact {
+    rest::XmlDriver $d = rest::XmlDriver();
+    sample($d);
+    assert($d->take() == '<user id="7"><name>&lt;Mario &amp; &quot;co&quot;&gt;</name><tags><tag>echo</tag><tag>xml</tag></tags><avatar/><team><title>Core</title></team></user>', 'compact');
+}
+
+#[group: "unit"]
+test xml_indented {
+    rest::XmlDriver $d = rest::XmlDriver($indent: true);
+    sample($d);
+    string $want = "<user id=\"7\">\n  <name>&lt;Mario &amp; &quot;co&quot;&gt;</name>\n  <tags>\n    <tag>echo</tag>\n    <tag>xml</tag>\n  </tags>\n  <avatar/>\n  <team>\n    <title>Core</title>\n  </team>\n</user>";
+    assert($d->take() == $want, 'indented');
+}
+
+#[group: "unit"]
+test xml_walks_free_form_values {
+    json::Value $extra = json::object();
+    $extra['count'] = 2;
+    $extra['ok'] = true;
+    $extra['list'] = json::arr();
+    $extra['list'][] = 'a';
+    $extra['1st key'] = 'x';
+    rest::XmlDriver $d = rest::XmlDriver();
+    $d->open('meta');
+    $d->key('extra');
+    $d->value($extra);
+    $d->close();
+    assert($d->take() == '<meta><extra><count>2</count><ok>true</ok><list><item>a</item></list><_1st_key>x</_1st_key></extra></meta>', 'walked');
+}
+
+#[group: "unit"]
+test xml_drops_a_null_attribute {
+    rest::XmlDriver $d = rest::XmlDriver();
+    $d->open('x');
+    $d->attribute('id');
+    $d->nil();
+    $d->close();
+    assert($d->take() == '<x/>', 'empty element, no attribute');
+}
+
+#[group: "unit"]
+test format_negotiates_accept_headers {
+    assert(rest::Format::negotiate('application/xml') == rest::Format::xml, 'xml');
+    assert(rest::Format::negotiate('text/xml, application/json') == rest::Format::xml, 'xml first');
+    assert(rest::Format::negotiate('application/json, application/xml') == rest::Format::json, 'json first');
+    assert(rest::Format::negotiate('*/*') == rest::Format::json, 'anything');
+    assert(rest::Format::negotiate('') == rest::Format::json, 'nothing');
+    assert(rest::Format::negotiate('text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8') == rest::Format::json, 'a browser');
+    assert(rest::Format::negotiate('application/xml;q=0.5, application/json') == rest::Format::json, 'json weighed higher');
+    assert(rest::Format::negotiate('application/json;q=0.4, Application/XML; charset=utf-8; q=0.8') == rest::Format::xml, 'xml weighed higher');
+    assert(rest::Format::xml->value() == 'application/xml', 'content type');
+}

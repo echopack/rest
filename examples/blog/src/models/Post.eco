@@ -1,0 +1,33 @@
+namespace blog;
+
+use std::time;
+
+#[carbon::model: 'posts']
+public class Post : carbon::Model<Post, PostRepository>
+{
+    public carbon::Link $link = .detached();
+
+    #[carbon::key]
+    public int64 $id = 0;
+    public int64 $authorId;
+    public string $title;
+    public string $body = '';
+    public Status $status = .draft;
+
+    #[carbon::codec: 'csv']
+    public array<string> $tags = [];
+
+    #[carbon::created]
+    public time::timestamp? $createdAt = null;
+
+    #[carbon::belongsTo: 'authorId']
+    public carbon::One<User> $author = .unloaded();
+
+    #[carbon::hasMany: 'postId']
+    public carbon::Many<Comment> $comments = .unloaded();
+
+    public function link() : carbon::Link&
+    {
+        return $this->link;
+    }
+}

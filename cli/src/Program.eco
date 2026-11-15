@@ -1,0 +1,519 @@
+namespace restgen;
+
+/**
+ * The decls JSON read into what the emitter needs: every #[rest::model]
+ * with its fields, their wire keys and encodable types, and for a resource
+ * with #[rest::from] how its mapping fills each field. Everything wrong
+ * with an attribute becomes a located problem here, so the emitter only
+ * ever sees a program it can write.
+ */
+public class Program
+{
+    public array<Resource> $resources = [];
+    public map<string, EnumInfo> $enums = [];
+    public array<string> $problems = [];
+
+    /**
+     * Whether a #[rest::from] source is not among the declarations read.
+     * A dependency's types only show with `--decls-all`.
+     */
+    public bool $missing = false;
+
+    private map<string, json::Value> $structs = [];
+    private map<string, bool> $names = [];
+
+    /**
+     * Read `echoc -p decls` output. Resources are taken from the modules in
+     * `$only`, or from every module when it is empty; enums and
+     * #[rest::from] sources from everything.
+     */
+    public static function read(const json::Value& $decls, const array<string>& $only) : Program
+    {
+        Program $p = Program();
+        map<string, json::Value> $found = [];
+
+        foreach (Json::items($decls, 'modules') as const &$module) {
+            string $moduleName = Json::text($module, 'name');
+            bool $wanted = $only->count() == 0;
+            foreach ($only as const &$o) {
+                if ($o == $moduleName) {
+                    $wanted = true;
+                }
+            }
+            foreach (Json::items($module, 'declarations') as const &$d) {
+                string $kind = Json::text($d, 'kind');
+                string $q = Json::text($d, 'qualified');
+                if ($kind == 'enum') {
+                    $p->enums[$q] = $p->enumInfo($d);
+                } else if ($kind == 'struct' || $kind == 'class') {
+                    $p->structs[$q] = $d;
+                    if ($wanted && Json::has($d, 'model')) {
+                        $found[$q] = $d;
+                    }
+                } else if ($wanted && Json::has($d, 'model')) {
+                    string $file = Json::text($d, 'file');
+                    int64 $line = Json::int($d, 'line');
+                    $p->problems[] = "{$file}:{$line}: {$q}: #[rest::model] belongs on a struct or a class";
+                }
+            }
+        }
+
+        array<string> $names = $found->keys();
+        $names->sort();
+        foreach ($names as const &$q) {
+            $p->names[$q] = true;
+        }
+        foreach ($names as const &$q) {
+            $p->resources[] = $p->build($found->get($q));
+        }
+        foreach ($p->resources as const &$r) {
+            $p->mapping($r);
+        }
+        return $p;
+    }
+
+    public const function resource(const string& $qualified) : Resource?
+    {
+        foreach ($this->resources as const &$r) {
+            if ($r->qualified == $qualified) {
+                return $r;
+            }
+        }
+        return null;
+    }
+
+    private const function enumInfo(const json::Value& $d) : EnumInfo
+    {
+        Ty? $backing = null;
+        json::Value $b = Json::field($d, 'backing');
+        if ($b->isObject()) {
+            $backing = $this->type($b);
+        }
+        array<string> $cases = [];
+        bool $payload = false;
+        foreach (Json::items($d, 'cases') as const &$c) {
+            $cases[] = Json::text($c, 'name');
+            if (Json::items($c, 'payload')->count() > 0) {
+                $payload = true;
+            }
+        }
+        return EnumInfo(Json::text($d, 'qualified'), $backing, $cases, $payload);
+    }
+
+    private function build(const json::Value& $d) : Resource
+    {
+        string $q = Json::text($d, 'qualified');
+        Resource $r = Resource(
+            $qualified: $q,
+            $entity: Json::tool($d, 'model'),
+            $file: Json::text($d, 'file'),
+            $line: Json::int($d, 'line')
+        );
+        if ($r->entity->empty()) {
+            $r->entity = Names::entity($q);
+        }
+        $r->from = Json::tool($d, 'from');
+        string $visibility = Json::text($d, 'visibility');
+        if ($visibility != 'public') {
+            $r->visibility = 'internal';
+        }
+
+        $this->known($d, ['model', 'from', 'keys'], $r->where(), 'model');
+        string $keys = Json::tool($d, 'keys');
+        if (!$keys->empty() && $keys != 'camel' && $keys != 'snake') {
+            $this->problems[] = "{$r->where()}: #[rest::keys: {$keys}] is neither camel nor snake";
+        }
+        if (Json::items($d, 'generics')->count() > 0) {
+            $this->problems[] = "{$r->where()}: a generic type cannot be a resource; give each instantiation a resource of its own";
+        }
+        if (!$r->from->empty() && Json::items($d, 'constructors')->count() > 0) {
+            $this->problems[] = "{$r->where()}: #[rest::from] builds the resource through its memberwise constructor, and a declared constructor removes it";
+        }
+
+        map<string, bool> $seen = [];
+        foreach (Json::items($d, 'fields') as const &$raw) {
+            if (Json::flag($raw, 'static')) {
+                continue;
+            }
+            Field $f = $this->field($r, $raw, $keys == 'camel');
+            if (!$f->skip) {
+                if ($seen->has($f->key)) {
+                    $this->problems[] = "{$r->where()}.{$f->name}: the key '{$f->key}' is already taken by another field";
+                }
+                $seen[$f->key] = true;
+            }
+            $r->fields[] = $f;
+        }
+        return $r;
+    }
+
+    private function field(const Resource& $r, const json::Value& $raw, bool $camel) : Field
+    {
+        string $name = Json::text($raw, 'name');
+        string $at = "{$r->where()}.{$name}";
+        string $key = Json::tool($raw, 'name');
+        if ($key->empty()) {
+            if ($camel) {
+                $key = $name;
+            } else {
+                $key = Names::snake($name);
+            }
+        }
+        Field $f = Field($name: $name, $key: $key, $ty: $this->type(Json::field($raw, 'type')));
+        $f->attribute = Json::has($raw, 'attribute');
+        $f->optional = Json::has($raw, 'optional');
+        $f->wrap = Json::has($raw, 'wrap');
+        $f->skip = Json::has($raw, 'skip');
+        $f->item = Json::tool($raw, 'item');
+        $f->stamp = Json::tool($raw, 'time');
+        $f->computed = Json::has($raw, 'computed');
+        $f->source = Json::tool($raw, 'source');
+        $f->defaulted = Json::flag($raw, 'default');
+        $f->decl = Json::field($raw, 'type');
+
+        $this->known($raw, ['name', 'source', 'computed', 'skip', 'optional', 'wrap', 'item', 'attribute', 'time'], $at, 'field');
+        if ($f->skip) {
+            if (!$r->from->empty() && !$f->defaulted) {
+                $this->problems[] = "{$at}: the mapping leaves a #[rest::skip] field to its default, and it has none";
+            }
+            return $f;
+        }
+        if (Json::text($raw, 'visibility') == 'private') {
+            $this->problems[] = "{$at}: a private field cannot be encoded; make it public or internal, or mark it #[rest::skip]";
+        }
+        if (!$f->ty->encodable()) {
+            $this->problems[] = "{$at}: '{$f->ty->spell}' cannot be encoded; mark the field #[rest::skip], or make the type a #[rest::model]";
+        }
+        if (!Names::literal($f->key)) {
+            $this->problems[] = "{$at}: the key '{$f->key}' holds a quote, a backslash or a control byte";
+        }
+        if ($f->optional && $f->ty->kind != Kind::optional) {
+            $this->problems[] = "{$at}: #[rest::optional] leaves out a null, and '{$f->ty->spell}' is never null";
+        }
+        if ($f->attribute && (!$f->ty->scalar() || $f->wrap)) {
+            $this->problems[] = "{$at}: #[rest::attribute] holds a single value, and '{$f->ty->spell}' is not one";
+        }
+        Ty $bare = $f->inner()->bare();
+        if (!$f->item->empty() && $bare->kind != Kind::list) {
+            $this->problems[] = "{$at}: #[rest::item] names the elements of a list, and '{$f->ty->spell}' is not a list";
+        }
+        if (!$f->stamp->empty()) {
+            if ($f->stamp != 'atom' && $f->stamp != 'zulu' && $f->stamp != 'date') {
+                $this->problems[] = "{$at}: #[rest::time: {$f->stamp}] is none of atom, zulu or date";
+            } else if ($bare->kind != Kind::time || $bare->name != 'std::time::timestamp') {
+                $this->problems[] = "{$at}: #[rest::time] picks how a time::timestamp is written, and '{$f->ty->spell}' is not one";
+            }
+        }
+        if ($f->computed) {
+            $this->computed($r, $f, $raw, $at);
+        }
+        return $f;
+    }
+
+    /**
+     * Check a #[rest::computed] field and find the include it waits for.
+     */
+    private function computed(const Resource& $r, Field $f, const json::Value& $raw, const string& $at) : void
+    {
+        if ($r->from->empty()) {
+            $this->problems[] = "{$at}: #[rest::computed] is filled by the mapping, and a resource without #[rest::from] has none";
+        }
+        if (!$f->source->empty()) {
+            $this->problems[] = "{$at}: a field is computed or read from #[rest::source], not both";
+        }
+        array<string> $reserved = ['transform', 'many', 'maybe', 'refine'];
+        foreach ($reserved as const &$word) {
+            if ($f->name == $word) {
+                $this->problems[] = "{$at}: '{$word}' is a method of every mapping, so a computed field cannot take the name";
+            }
+        }
+        string $named = Json::tool($raw, 'computed');
+        if ($f->ty->kind == Kind::include) {
+            $f->include = $f->key;
+            if (!$named->empty()) {
+                $f->include = $named;
+            }
+        } else if (!$named->empty()) {
+            $this->problems[] = "{$at}: #[rest::computed: '{$named}'] is written only on request, so the field has to be a rest::Include";
+        }
+    }
+
+    /**
+     * Decide, for a resource with #[rest::from], where its mapping takes
+     * every field from.
+     */
+    private function mapping(Resource $r) : void
+    {
+        if ($r->from->empty()) {
+            return;
+        }
+        if (!$this->structs->has($r->from)) {
+            $this->missing = true;
+            $this->problems[] = "{$r->where()}: #[rest::from: '{$r->from}'] names no struct or class restgen can see; spell it fully qualified";
+            return;
+        }
+        json::Value $source = $this->structs->get($r->from);
+        array<json::Value> $sourceFields = Json::items($source, 'fields');
+
+        foreach ($r->fields as $f) {
+            if ($f->skip || $f->computed) {
+                continue;
+            }
+            string $at = "{$r->where()}.{$f->name}";
+            string $sourceName = $f->name;
+            if (!$f->source->empty()) {
+                $sourceName = $f->source;
+            }
+            json::Value? $match = null;
+            foreach ($sourceFields as const &$s) {
+                if (Json::text($s, 'name') == $sourceName && !Json::flag($s, 'static')) {
+                    $match = $s;
+                }
+            }
+            json::Value $s = guard $match else {
+                $this->problems[] = "{$at}: {$r->from} has no field '{$sourceName}'; mark the field #[rest::computed], or name the source field with #[rest::source]";
+                continue;
+            };
+            if (Json::text($s, 'visibility') == 'private') {
+                $this->problems[] = "{$at}: the field '{$sourceName}' of {$r->from} is private, so the mapping cannot read it";
+                continue;
+            }
+            $f->from = $sourceName;
+            string? $refused = $this->fill($f, $f->decl, Json::field($s, 'type'));
+            if ($refused != null) {
+                string $why = guard $refused;
+                $this->problems[] = "{$at}: {$why}";
+            }
+        }
+    }
+
+    /**
+     * Work out the access and the conversion from a source field typed
+     * `$source` to a resource field typed `$target`, null when they fit,
+     * else why not.
+     */
+    private const function fill(Field $f, const json::Value& $target, const json::Value& $source) : string?
+    {
+        json::Value $want = $target;
+        bool $include = false;
+        if (Program::generic($want, 'EchoPack::Rest::Include')) {
+            $include = true;
+            $want = Json::items($want, 'args')[0];
+        }
+
+        json::Value $have = $source;
+        if (Program::generic($have, 'carbon::One')) {
+            $f->access = Access::one;
+            $have = Json::items($have, 'args')[0];
+        } else if (Program::generic($have, 'carbon::Many')) {
+            $f->access = Access::many;
+            $have = Json::items($have, 'args')[0];
+        } else if (Program::generic($have, 'EchoPack::Rest::Resolved')) {
+            $f->access = Access::resolved;
+            $have = Json::items($have, 'args')[0];
+        }
+        string $sourceSpell = $this->type($source)->spell;
+
+        if ($f->access != Access::plain && !$include) {
+            return "'{$sourceSpell}' is there only once loaded, so the field has to be a rest::Include";
+        }
+        if ($f->access == Access::many) {
+            // the slot hands out an array of what it holds
+            if (Json::text($want, 'kind') != 'array') {
+                return "'{$sourceSpell}' holds a list, and '{$f->ty->spell}' is not one";
+            }
+            $want = Json::field($want, 'of');
+        }
+
+        if ($this->same($want, $have)) {
+            $f->conv = Conv::copy;
+            return null;
+        }
+        if ($f->access == Access::many) {
+            return $this->nested($f, $want, $have, Conv::many, $sourceSpell);
+        }
+        string $wantKind = Json::text($want, 'kind');
+        string $haveKind = Json::text($have, 'kind');
+        if ($f->access == Access::one) {
+            // get() hands out T?
+            return $this->nested($f, $want, $have, Conv::maybe, $sourceSpell);
+        }
+        if ($f->access == Access::resolved) {
+            // get() hands out T?, a list included
+            if ($wantKind == 'array' && $haveKind == 'array') {
+                $f->sourceSpell = $this->type($have)->spell;
+                return $this->nested($f, Json::field($want, 'of'), Json::field($have, 'of'), Conv::many, $sourceSpell);
+            }
+            return $this->nested($f, $want, $have, Conv::maybe, $sourceSpell);
+        }
+
+        if ($include && $haveKind == 'optional' && $this->same($want, Json::field($have, 'of'))) {
+            // Include::of takes the null as none
+            $f->conv = Conv::copy;
+            return null;
+        }
+        if ($wantKind == 'array' && $haveKind == 'array') {
+            return $this->nested($f, Json::field($want, 'of'), Json::field($have, 'of'), Conv::many, $sourceSpell);
+        }
+        if ($wantKind == 'optional' && $haveKind == 'optional') {
+            return $this->nested($f, Json::field($want, 'of'), Json::field($have, 'of'), Conv::maybe, $sourceSpell);
+        }
+        if ($include && $haveKind == 'optional') {
+            return $this->nested($f, $want, Json::field($have, 'of'), Conv::maybe, $sourceSpell);
+        }
+        return $this->nested($f, $want, $have, Conv::transform, $sourceSpell);
+    }
+
+    /**
+     * Fill through the mapping of the resource `$want` names, when that
+     * resource is built from what `$have` names.
+     */
+    private const function nested(Field $f, const json::Value& $want, const json::Value& $have, Conv $conv, const string& $sourceSpell) : string?
+    {
+        string $wanted = Json::text($want, 'name');
+        string $had = Json::text($have, 'name');
+        if (Json::text($want, 'kind') == 'named' && $this->names->has($wanted) && Json::text($have, 'kind') == 'named') {
+            Resource $nested = guard $this->resource($wanted);
+            if ($nested->from == $had) {
+                $f->conv = $conv;
+                $f->mapping = $nested->mapping();
+                return null;
+            }
+            if ($nested->from->empty()) {
+                return "{$wanted} has no #[rest::from], so nothing builds it from '{$sourceSpell}'; mark the field #[rest::computed]";
+            }
+            return "{$wanted} is built from {$nested->from}, not from '{$sourceSpell}'; mark the field #[rest::computed]";
+        }
+        return "'{$sourceSpell}' does not fit '{$f->ty->spell}'; mark the field #[rest::computed], or read another field with #[rest::source]";
+    }
+
+    /**
+     * Whether a decls type is `name<T>` with one argument.
+     */
+    private static function generic(const json::Value& $t, const string& $name) : bool
+    {
+        return Json::text($t, 'kind') == 'named'
+            && Json::text($t, 'name') == $name
+            && Json::items($t, 'args')->count() == 1;
+    }
+
+    /**
+     * Two decls types are the same type, a `const` mark aside.
+     */
+    private const function same(const json::Value& $a, const json::Value& $b) : bool
+    {
+        return $this->type($a)->spell == $this->type($b)->spell;
+    }
+
+    /**
+     * Refuse any #[rest::...] on `$d` that is not in `$allowed`.
+     */
+    private function known(const json::Value& $d, const array<string>& $allowed, const string& $at, const string& $what) : void
+    {
+        foreach (Json::tools($d) as const &$t) {
+            string $name = Json::text($t, 'name');
+            bool $ok = false;
+            foreach ($allowed as const &$a) {
+                if ($a == $name) {
+                    $ok = true;
+                }
+            }
+            if (!$ok) {
+                string $list = str::join($allowed, ', ');
+                $this->problems[] = "{$at}: #[rest::{$name}] is not a {$what} attribute ({$list})";
+            }
+        }
+    }
+
+    /**
+     * Classify a decls type tree for the encoder, and spell it as Echo
+     * source does, for messages and generated locals.
+     */
+    private const function type(const json::Value& $t) : Ty
+    {
+        string $kind = Json::text($t, 'kind');
+        if ($kind == 'prim') {
+            string $name = Json::text($t, 'name');
+            if ($name == 'bool') {
+                return Ty($kind: Kind::boolean, $spell: $name);
+            }
+            if ($name == 'float64') {
+                return Ty($kind: Kind::floating, $spell: $name);
+            }
+            if ($name == 'float32') {
+                return Ty($kind: Kind::floating, $spell: $name, $cast: true);
+            }
+            if ($name == 'int64') {
+                return Ty($kind: Kind::integer, $spell: $name);
+            }
+            if ($name->starts('int') || $name->starts('uint') || $name == 'isize' || $name == 'usize') {
+                return Ty($kind: Kind::integer, $spell: $name, $cast: true);
+            }
+            return Ty($kind: Kind::unknown, $spell: $name);
+        }
+        if ($kind == 'string') {
+            return Ty($kind: Kind::text, $spell: 'string');
+        }
+        if ($kind == 'optional') {
+            Ty $of = $this->type(Json::field($t, 'of'));
+            return Ty($kind: Kind::optional, $spell: "{$of->spell}?", $of: $of);
+        }
+        if ($kind == 'array') {
+            Ty $of = $this->type(Json::field($t, 'of'));
+            return Ty($kind: Kind::list, $spell: "array<{$of->spell}>", $of: $of);
+        }
+        if ($kind == 'map') {
+            return $this->dict('map', Json::field($t, 'key'), Json::field($t, 'value'), false);
+        }
+        if ($kind == 'named') {
+            string $name = Json::text($t, 'name');
+            array<json::Value> $args = Json::items($t, 'args');
+            if ($name == 'ordered_map' && $args->count() == 2) {
+                return $this->dict('ordered_map', $args[0], $args[1], true);
+            }
+            if ($name == 'EchoPack::Rest::Include' && $args->count() == 1) {
+                Ty $of = $this->type($args[0]);
+                return Ty($kind: Kind::include, $spell: "EchoPack::Rest::Include<{$of->spell}>", $of: $of);
+            }
+            if ($args->count() > 0) {
+                array<string> $spelled = [];
+                foreach ($args as const &$a) {
+                    $spelled[] = $this->type($a)->spell;
+                }
+                string $list = str::join($spelled, ', ');
+                return Ty($kind: Kind::unknown, $spell: "{$name}<{$list}>");
+            }
+            if ($this->names->has($name)) {
+                return Ty($kind: Kind::model, $spell: $name, $name: $name);
+            }
+            if ($name == 'json::Value') {
+                return Ty($kind: Kind::value, $spell: $name);
+            }
+            if ($name == 'std::time::timestamp' || $name == 'calendar::Date' || $name == 'calendar::DateTime' || $name == 'calendar::Zoned') {
+                return Ty($kind: Kind::time, $spell: $name, $name: $name);
+            }
+            if ($this->enums->has($name)) {
+                EnumInfo $e = $this->enums->get($name);
+                if ($e->backing != null) {
+                    return Ty($kind: Kind::backed, $spell: $name, $name: $name, $of: $e->backing);
+                }
+                if (!$e->payload) {
+                    return Ty($kind: Kind::plain, $spell: $name, $name: $name);
+                }
+            }
+            return Ty($kind: Kind::unknown, $spell: $name);
+        }
+        return Ty($kind: Kind::unknown, $spell: $kind);
+    }
+
+    private const function dict(const string& $container, const json::Value& $key, const json::Value& $value, bool $ordered) : Ty
+    {
+        Ty $k = $this->type($key);
+        Ty $v = $this->type($value);
+        string $spell = "{$container}<{$k->spell}, {$v->spell}>";
+        if ($k->kind != Kind::text) {
+            return Ty($kind: Kind::unknown, $spell: $spell);
+        }
+        return Ty($kind: Kind::dict, $spell: $spell, $of: $v, $ordered: $ordered);
+    }
+}

@@ -1,0 +1,40 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+
+/**
+ * Users for everyone: the last name shortened unless the user made it
+ * public or is the one asking, the email only for themselves.
+ */
+#[atomic]
+public class UserTransformer : UserResourceMapping
+{
+    public constructor()
+    {
+    }
+
+    public function displayName(const User& $source, rest::Context& $ctx) : string
+    {
+        if ($source->showLastName || UserTransformer::self($source, $ctx)) {
+            return "{$source->firstName} {$source->lastName}";
+        }
+        string $initial = $source->lastName->sub(0, 1);
+        return "{$source->firstName} {$initial}.";
+    }
+
+    public function email(const User& $source, rest::Context& $ctx) : string?
+    {
+        if (UserTransformer::self($source, $ctx)) {
+            return $source->email;
+        }
+        return null;
+    }
+
+    private static function self(const User& $source, const rest::Context& $ctx) : bool
+    {
+        Viewer $me = guard $ctx->find<Viewer>() else {
+            return false;
+        };
+        return $me->id == $source->id;
+    }
+}

@@ -1,0 +1,28 @@
+namespace restgen;
+
+#[group: "unit"]
+test wired_finds_the_guarded_sources {
+    assert(Generator::wired("#[if: !REST_NOGEN]\n#[sources: \".rest/*.eco\"]\n#[end]"), 'plain');
+    assert(Generator::wired("#[if: !CARBON_NOGEN]\n#[if: !REST_NOGEN]\n#[sources: \".rest/*.eco\"]\n#[end]\n#[end]"), 'nested');
+    assert(Generator::wired("#[if: !REST_NOGEN]\n#[if: !CARBON_NOGEN]\n  #[sources: \".rest/*.eco\"]\n#[end]\n#[end]"), 'nested the other way');
+    assert(!Generator::wired("#[sources: \".rest/*.eco\"]"), 'unguarded');
+    assert(!Generator::wired("#[if: !REST_NOGEN]\n#[end]\n#[sources: \".rest/*.eco\"]"), 'after the block');
+    assert(!Generator::wired("// #[if: !REST_NOGEN]\n#[sources: \".rest/*.eco\"]"), 'commented');
+}
+
+#[group: "unit"]
+test unread_names_a_missing_key {
+    json::Value $ok = guard json::parse('{"modules":[{"declarations":[{"kind":"struct","qualified":"a::B","file":"f","line":1,"tools":[],"fields":[]}]}]}');
+    assert(Generator::unread($ok) == null, 'complete');
+    json::Value $moved = guard json::parse('{"modules":[{"declarations":[{"kind":"struct","qualified":"a::B","file":"f","line":1,"fields":[]}]}]}');
+    assert((Generator::unread($moved) ?? '') == 'tools', 'tools missing');
+}
+
+#[group: "unit"]
+test named_reads_the_module_name {
+    string $blog = Generator::named("/* blog */\n#[module: \"blog\"]\n#[version: \"0.1.0\"]\n") ?? '';
+    assert($blog == 'blog', 'double quotes');
+    string $shop = Generator::named("#[module: 'shop']\n") ?? '';
+    assert($shop == 'shop', 'single quotes');
+    assert(Generator::named("#[version: \"0.1.0\"]\n") == null, 'none');
+}

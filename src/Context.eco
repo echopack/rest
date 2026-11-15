@@ -1,0 +1,143 @@
+namespace EchoPack::Rest;
+
+/**
+ * Everything one transform call may depend on beyond its source: the
+ * transformers for nested resources, the includes the request asked for,
+ * where in the response the mapping is, and typed request values such as
+ * the viewer or the locale. Build one per request and pass it by
+ * reference; the transformers themselves stay shared and stateless.
+ *
+ * ```echo
+ * rest::Context $ctx = rest::Context($transformers, $includes);
+ * $ctx->put(Viewer($me));
+ * PostResource $r = $posts->transform($post, $ctx);
+ * ```
+ */
+public struct Context
+{
+    public Transformers $transformers;
+    public Includes $includes;
+
+    /**
+     * How many resources deep a response may nest. Loaded data can form a
+     * cycle (a user whose posts carry the user again); past the limit a
+     * relation is left out instead of recursing forever.
+     */
+    public usize $limit;
+
+    /**
+     * The include path of every level entered, outermost first:
+     * `comments`, then `comments.author`.
+     */
+    private array<string> $path = [];
+    private map<type_id, erased> $values = [];
+
+    public constructor(Transformers $transformers, Includes $includes = Includes(), usize $limit = 8)
+    {
+        $this->transformers = $transformers;
+        $this->includes = mv $includes;
+        $this->limit = $limit;
+    }
+
+    /**
+     * Step into the field `$key` of the resource being built, false when
+     * that would nest deeper than `limit`. Generated mappings do this
+     * around every nested resource, so `wants` answers relative to the
+     * resource at hand, and leave the field out when it is refused.
+     */
+    public function enter(const string& $key) : bool
+    {
+        if ($this->path->count() >= $this->limit) {
+            return false;
+        }
+        if ($this->path->empty()) {
+            $this->path->push($key);
+        } else {
+            $this->path->push("{$this->path[$this->path->count() - 1]}.{$key}");
+        }
+        return true;
+    }
+
+    /**
+     * Step back out of the last `enter` that answered true.
+     */
+    public function leave() : void
+    {
+        $this->path->pop();
+    }
+
+    /**
+     * Where the mapping is, as an include path: empty at the top,
+     * `comments.author` two levels down.
+     */
+    public const function at() : string
+    {
+        if ($this->path->empty()) {
+            return '';
+        }
+        return $this->path[$this->path->count() - 1];
+    }
+
+    /**
+     * How many resources deep the mapping is.
+     */
+    public const function depth() : usize
+    {
+        return $this->path->count();
+    }
+
+    /**
+     * Whether the request asked for `$key` on the resource being built:
+     * `stats` at the top, `author.stats` inside the author.
+     */
+    public const function wants(const string& $key) : bool
+    {
+        if ($this->path->empty()) {
+            return $this->includes->has($key);
+        }
+        return $this->includes->has("{$this->path[$this->path->count() - 1]}.{$key}");
+    }
+
+    /**
+     * Keep `$value` for this request, one per type: `$ctx->put(Viewer($me))`.
+     */
+    public function put<T : class>(T $value) : void
+    {
+        $this->values[type_id<T>()] = erased::from($value);
+    }
+
+    /**
+     * This request's `T`, null when it has none.
+     */
+    public const function find<T : class>() : T?
+    {
+        type_id $id = type_id<T>();
+        if (!$this->values->has($id)) {
+            return null;
+        }
+        erased $held = $this->values->get($id);
+        T $value;
+        // sound: only put writes the key, always with this type
+        unsafe {
+            $value = assume<T>($held);
+        }
+        return $value;
+    }
+
+    /**
+     * This request's `T`. A missing one is a wiring mistake and stops the
+     * program.
+     */
+    public const function get<T : class>() : T
+    {
+        T $found = guard $this->find<T>() else {
+            die('rest: the context has no value of that type; put it before transforming');
+        };
+        return $found;
+    }
+
+    public const function has<T : class>() : bool
+    {
+        return $this->values->has(type_id<T>());
+    }
+}

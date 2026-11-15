@@ -1,0 +1,41 @@
+/*
+ * blog: rest's example, the way the HTTP framework will put it together.
+ *
+ * carbon models (users, posts, comments) and one plain struct (a digest),
+ * resources that say what an API shows of them, and transformers that
+ * write the computed fields. Actions are container services tagged with
+ * their route: each one checks the request's includes against what it
+ * allows, loads exactly those relations through carbon, and transforms.
+ * The tests run the actions on carbon's fake driver; app/ serves them over
+ * libhttp on a real MySQL (scripts/run.sh starts one).
+ *
+ * Generated code: carbongen writes `.carbon/`, restgen writes `.rest/`
+ * (scripts/gen.sh runs both). Each decls pass leaves out what the other
+ * tool generates too, so a stale file of one never stops the other.
+ */
+
+#[module: "blog"]
+#[version: "0.1.0"]
+
+#[depends: "../.."]
+#[depends: "../../../carbon"]
+#[depends: "../../../container"]
+#[requires: "echopack/hydrahon" { version: "^0.1", source: git "https://github.com/echopack/hydrahon" }]
+#[requires: "echopack/calendar" { version: "^0.1", source: git "https://github.com/echopack/calendar" }]
+#[requires: "echolang/libjson" { version: "^0.2", source: git "https://github.com/echolang/libjson" }]
+#[requires: "echolang/libhttp" { version: "^0.2", source: git "https://github.com/echolang/libhttp" }]
+
+#[sources: "src/**/*.eco"]
+
+#[if: !CARBON_NOGEN]
+#[sources: ".carbon/*.eco"]
+#[if: !REST_NOGEN]
+#[sources: ".rest/*.eco"]
+#[end]
+#[end]
+
+#[target: test] {
+    // the fake driver the tests run on
+    #[depends: "../../../carbon/fake"]
+    #[sources: "tests/*.eco"]
+}

@@ -1,0 +1,21 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+
+/**
+ * A comment. Its post is a back reference when the comments were loaded
+ * for their posts, so it is only written when loaded on its own.
+ */
+#[rest::model: 'comment']
+#[rest::from: 'blog::Comment']
+public struct CommentResource
+{
+    #[rest::attribute]
+    public int64 $id;
+
+    public string $body;
+
+    public rest::Include<UserResource> $author;
+
+    public rest::Include<PostResource> $post;
+}

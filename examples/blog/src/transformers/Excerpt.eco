@@ -1,0 +1,10 @@
+namespace blog;
+
+/**
+ * How long a post's excerpt is: configuration, bound as a container
+ * parameter.
+ */
+public struct Excerpt
+{
+    public usize $length;
+}

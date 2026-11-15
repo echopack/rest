@@ -1,0 +1,99 @@
+/**
+ * The `encode` overload set. `restgen` adds one overload per resource in
+ * the consumer's `.rest/`, and every generic here that encodes a resource
+ * calls `encode` unqualified so it picks that overload up.
+ *
+ * The scalar overloads are load-bearing beyond their own use: echoc binds
+ * a call inside a generic body when its overload set has a single
+ * candidate, before a consumer module has added its own. With several
+ * candidates the call stays open until instantiation, which is when the
+ * generated overloads are visible. Keep at least two.
+ */
+
+namespace EchoPack::Rest;
+
+use std::time;
+
+public function encode<D : Driver>(bool $v, D& $d) : void
+{
+    $d->bool($v);
+}
+
+public function encode<D : Driver>(int64 $v, D& $d) : void
+{
+    $d->int($v);
+}
+
+public function encode<D : Driver>(float64 $v, D& $d) : void
+{
+    $d->float($v);
+}
+
+public function encode<D : Driver>(const string& $v, D& $d) : void
+{
+    $d->str($v);
+}
+
+public function encode<D : Driver>(const json::Value& $v, D& $d) : void
+{
+    $d->value($v);
+}
+
+/**
+ * An instant, `Stamp::atom`: `2026-10-13T14:06:00+00:00`.
+ */
+public function encode<D : Driver>(time::timestamp $v, D& $d) : void
+{
+    $d->str(Stamp::atom->render($v));
+}
+
+/**
+ * A wall clock time without a zone: `2026-10-13T14:06:00`.
+ */
+public function encode<D : Driver>(const calendar::DateTime& $v, D& $d) : void
+{
+    $d->str($v->format(Patterns::$wall));
+}
+
+/**
+ * A calendar day: `2026-10-13`.
+ */
+public function encode<D : Driver>(const calendar::Date& $v, D& $d) : void
+{
+    $d->str($v->format(Patterns::$date));
+}
+
+/**
+ * An instant in a zone, RFC 3339 with its offset.
+ */
+public function encode<D : Driver>(const calendar::Zoned& $v, D& $d) : void
+{
+    $d->str($v->format(calendar::Format::rfc3339()));
+}
+
+/**
+ * A list of anything encodable. An empty item name lets every element
+ * name itself, which is what a list of resources wants.
+ */
+public function encode<D : Driver, M>(const array<M>& $items, D& $d) : void
+{
+    $d->list('');
+    foreach ($items as const &$item) {
+        encode($item, $d);
+    }
+    $d->close();
+}
+
+/**
+ * A present include: its value, or null. Whether the key is written at
+ * all is the generated encoder's call.
+ */
+public function encode<D : Driver, M>(const Include<M>& $v, D& $d) : void
+{
+    // the field, not get(): a getter hands out a copy of its own
+    M $value = guard $v->value else {
+        $d->nil();
+        return;
+    };
+    encode($value, $d);
+}

@@ -1,0 +1,30 @@
+namespace restgen;
+
+/**
+ * What an encoder does with a value of a resource field's type.
+ */
+public enum Kind
+{
+    case boolean;
+    case integer;
+    case floating;
+    case text;
+    case optional;
+    case list;
+    case dict;
+    case model;
+    case backed;
+    case plain;
+    case value;
+
+    /**
+     * `time::timestamp` and the calendar types the library encodes.
+     */
+    case time;
+
+    /**
+     * `rest::Include<T>`: written only when present.
+     */
+    case include;
+    case unknown;
+}

@@ -1,0 +1,14 @@
+namespace EchoPack::Rest;
+
+/**
+ * One open element: its tag, the name its elements take when it is a list
+ * that names them, whether the start tag still waits for its `>`, and
+ * whether anything was nested inside.
+ */
+internal struct XmlFrame
+{
+    internal string $tag;
+    internal string $item;
+    internal bool $starting = true;
+    internal bool $nested = false;
+}

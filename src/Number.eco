@@ -1,0 +1,16 @@
+namespace EchoPack::Rest;
+
+/**
+ * What the drivers need to know about a float before they write it.
+ */
+internal struct Number
+{
+    /**
+     * Whether a float is a real number JSON and XML can carry. NaN is the
+     * one value unequal to itself, and an infinity minus itself is NaN.
+     */
+    internal static function finite(float64 $v) : bool
+    {
+        return $v - $v == 0.0;
+    }
+}

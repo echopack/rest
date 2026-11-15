@@ -1,0 +1,12 @@
+namespace blog;
+
+/**
+ * The digest needs nothing computed either.
+ */
+#[atomic]
+public class DigestTransformer : DigestResourceMapping
+{
+    public constructor()
+    {
+    }
+}

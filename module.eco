@@ -1,0 +1,40 @@
+/*
+ * rest: the response layer for Echo HTTP services.
+ *
+ * An endpoint answers with resources: plain structs marked #[rest::model]
+ * that say what leaves the process, key by key. restgen reads them through
+ * `echoc -p decls` and writes, per resource, its `encode` (any Driver: JSON,
+ * XML, your own) and a mapping interface: a transformer class conforms to
+ * `UserResourceMapping` and gets `transform`, `many` and `maybe` for free,
+ * writing only the computed fields by hand. Sources are carbon models or
+ * plain structs alike.
+ *
+ * A transformer never loads anything. The action resolves the relations a
+ * request asks for (rest::Allow parses and checks `?include=`), and the
+ * generated mapping writes a relation when the request includes it and it
+ * is loaded. Per request
+ * data, the viewer, the locale, the includes, rides on a rest::Context next to
+ * the rest::Transformers registry the mapping uses for nested resources, so
+ * transformers stay shared, stateless services.
+ */
+
+#[module: "rest"]
+#[version: "0.2.0"] // x-release-please-version
+#[epm::echoc: ">=0.14.0"]
+#[epm::license: "MIT"]
+#[epm::description: "Resources, transformers and generated, format-agnostic encoding for Echo HTTP services"]
+
+#[requires: "echolang/libjson" { version: "^0.2", source: git "https://github.com/echolang/libjson" }]
+#[requires: "echolang/libhttp" { version: "^0.2", source: git "https://github.com/echolang/libhttp" }]
+#[requires: "echopack/calendar" { version: "^0.1", source: git "https://github.com/echopack/calendar" }]
+
+#[sources: "src/**/*.eco"]
+
+// restgen, offered to the modules that depend on rest: `epm run restgen`, or a hook
+#[target: exe { name: "restgen", entry: "cli/main.eco", public: true }] {
+    #[sources: ["cli/main.eco", "cli/src/*.eco"]]
+}
+
+#[target: test] {
+    #[sources: "tests/*.eco"]
+}

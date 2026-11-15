@@ -1,0 +1,51 @@
+namespace EchoPack::Rest;
+
+/**
+ * The contract between a resource's generated `encode` and an output format.
+ *
+ * `encode` walks a resource and calls these in field order; a driver turns
+ * the calls into bytes. Every call goes through a constrained generic, so a
+ * driver is a plain struct and nothing dispatches at runtime.
+ */
+public interface Driver
+{
+    /**
+     * Start an entity. `name` is what the entity is called when no key
+     * names it: the document root, or one element of a list.
+     */
+    function open(const string& $name) : void;
+
+    /**
+     * Start a list. `item` names one element, for formats that need a
+     * name per element.
+     */
+    function list(const string& $item) : void;
+
+    /**
+     * End the innermost entity or list.
+     */
+    function close() : void;
+
+    /**
+     * The next value belongs to this key of the open entity.
+     */
+    function key(const string& $name) : void;
+
+    /**
+     * The next value belongs to this key and is a scalar a format may
+     * write as an attribute. Formats without attributes treat it as `key`.
+     */
+    function attribute(const string& $name) : void;
+
+    function nil() : void;
+    function bool(bool $v) : void;
+    function int(int64 $v) : void;
+    function float(float64 $v) : void;
+    function str(const string& $v) : void;
+
+    /**
+     * A free-form libjson tree, for the fields a resource types as
+     * `json::Value`.
+     */
+    function value(const json::Value& $v) : void;
+}

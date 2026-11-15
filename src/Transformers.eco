@@ -1,0 +1,98 @@
+namespace EchoPack::Rest;
+
+/**
+ * Every transformer of an application, keyed by the mapping interface it
+ * implements. Generated mappings reach the transformer of a nested resource
+ * through it at call time, as `get<UserResourceMapping>()`, so they never
+ * name a transformer class, and two transformers that nest each other (a
+ * user's posts, a post's author) never hold each other or form a
+ * construction cycle.
+ *
+ * Fill it at the composition root, then `seal()` it and share it: after
+ * the seal it is only read, so every request thread can use it. A
+ * transformer is shared the same way, so a transformer class is
+ * `#[atomic]` and keeps no per request state; that goes on the `Context`.
+ *
+ * ```echo
+ * rest::Transformers $t = rest::Transformers();
+ * $t->add<UserResourceMapping>(UserTransformer($translator));
+ * $t->add<PostResourceMapping>(PostTransformer());
+ * $t->seal();
+ * ```
+ */
+#[atomic]
+public class Transformers
+{
+    private map<type_id, erased> $held = [];
+    private bool $sealed = false;
+
+    public constructor()
+    {
+    }
+
+    /**
+     * Register `$transformer` as the one serving the mapping `M`. Name the
+     * mapping: `add<UserResourceMapping>(UserTransformer())`. Adding a
+     * mapping twice, or after `seal()`, is a wiring mistake and stops the
+     * program.
+     */
+    public function add<M>(M $transformer) : void
+    {
+        if ($this->sealed) {
+            die('rest: a transformer was added after seal()');
+        }
+        type_id $id = type_id<M>();
+        if ($this->held->has($id)) {
+            die('rest: a mapping was given two transformers');
+        }
+        $this->held[$id] = erased::from(Box<M>($transformer));
+    }
+
+    /**
+     * The transformer serving the mapping `M`. A missing one is a wiring
+     * mistake and stops the program.
+     */
+    public const function get<M>() : M
+    {
+        M $found = guard $this->find<M>() else {
+            die('rest: no transformer serves that mapping; add<XResourceMapping>(...) it at the composition root');
+        };
+        return $found;
+    }
+
+    /**
+     * The transformer serving the mapping `M`, null when none was added.
+     */
+    public const function find<M>() : M?
+    {
+        type_id $id = type_id<M>();
+        if (!$this->held->has($id)) {
+            return null;
+        }
+        erased $held = $this->held->get($id);
+        Box<M> $box;
+        // sound: only add writes the key, always with this type
+        unsafe {
+            $box = assume<Box<M>>($held);
+        }
+        return $box->value;
+    }
+
+    public const function has<M>() : bool
+    {
+        return $this->held->has(type_id<M>());
+    }
+
+    /**
+     * Freeze the registry, so threads can share it.
+     */
+    public function seal() : void
+    {
+        $this->sealed = true;
+    }
+
+    public const function sealed() : bool
+    {
+        return $this->sealed;
+    }
+}

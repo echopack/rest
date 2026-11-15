@@ -1,0 +1,77 @@
+/**
+ * The blog on carbon's fake MySQL: a DB with the repositories registered,
+ * the app's container on top, and requests built by hand.
+ */
+
+use blog::{User, Post, Comment, Status, UserTable, PostTable, CommentTable};
+use carbon::fake;
+use hydrahon::{Value, Mysql};
+use std::time;
+
+class Rig
+{
+    public fake::Driver<Mysql> $fake;
+    public carbon::DB $db;
+    public carbon::listen::Log $log;
+    public container::Container $app;
+
+    public constructor()
+    {
+        $this->fake = fake::Driver<Mysql>();
+        $this->log = carbon::listen::Log();
+        $this->db = carbon::DB($this->fake);
+        $this->db->listen($this->log);
+        guard $this->db->register<blog::UserRepository>();
+        guard $this->db->register<blog::PostRepository>();
+        guard $this->db->register<blog::CommentRepository>();
+        guard blog::Carbon::check($this->db);
+        $this->app = blog::App::container($this->db);
+    }
+
+    /**
+     * Run the action of type `A` on a GET with `?include=$include`, as the
+     * user `$viewer` (none when 0), with the route parameter `id`.
+     */
+    public function get<A>(const string& $include, int64 $viewer = 0, string $id = '') : http::Response
+    {
+        http::Query $query = http::Query();
+        if (!$include->empty()) {
+            $query->add('include', $include);
+        }
+        http::Headers $headers = http::Headers();
+        if ($viewer != 0) {
+            $headers->add('X-User', str::from($viewer));
+        }
+        http::Request $req = http::Request(.get, '/', '/', '', $query, 'HTTP/1.1', $headers, '', '127.0.0.1');
+        if (!$id->empty()) {
+            $req->params['id'] = $id;
+        }
+        A $action = $this->app->get<A>();
+        return $action->handle($req);
+    }
+
+    public function queries() : usize
+    {
+        return $this->log->count();
+    }
+}
+
+function at() : time::timestamp
+{
+    return time::timestamp::from_unix_secs(1760364360);
+}
+
+function userRow(int64 $id, const string& $first, const string& $last) : array<Value>
+{
+    return UserTable()->row(User($id: $id, $email: "{$first}@example.com", $firstName: $first, $lastName: $last, $createdAt: at()));
+}
+
+function postRow(int64 $id, int64 $author, const string& $title, Status $status = .published) : array<Value>
+{
+    return PostTable()->row(Post($id: $id, $authorId: $author, $title: $title, $body: 'Echo has types and speed', $status: $status, $tags: ['echo'], $createdAt: at()));
+}
+
+function commentRow(int64 $id, int64 $post, int64 $author, const string& $body) : array<Value>
+{
+    return CommentTable()->row(Comment($id: $id, $postId: $post, $authorId: $author, $body: $body));
+}

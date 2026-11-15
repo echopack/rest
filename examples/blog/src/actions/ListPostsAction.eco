@@ -1,0 +1,53 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+
+/**
+ * `GET /posts`: published posts, newest first. `?include=` picks the
+ * relations from `author`, `comments`, `comments.author` and `stats`; the
+ * action loads exactly those, the mapping writes exactly what is loaded.
+ */
+#[atomic]
+public class ListPostsAction : Action
+{
+    public carbon::DB $db;
+    public rest::Transformers $transformers;
+    private rest::Allow $allow;
+
+    public constructor(carbon::DB $db, rest::Transformers $transformers)
+    {
+        $this->db = $db;
+        $this->transformers = $transformers;
+        $this->allow = rest::Allow::of(['author', 'comments.author', 'stats']);
+    }
+
+    public function handle(http::Request $req) : http::Response
+    {
+        rest::Includes $inc = guard $this->allow->parse($req) else ($e) {
+            return rest::Problem::of($e)->response();
+        };
+
+        carbon::Session $session = $this->db->scoped();
+        PostRepository $posts = guard $session->repo<PostRepository>();
+        PostQuery $query = $posts->published();
+        if ($inc->has('author')) {
+            $query = $query->withAuthor();
+        }
+        if ($inc->has('comments.author')) {
+            $query = $query->withComments(function(CommentQuery $c) : CommentQuery {
+                return $c->withAuthor();
+            });
+        } else if ($inc->has('comments')) {
+            $query = $query->withComments();
+        }
+        array<Post> $rows = guard $query->get() else ($e) {
+            return Failure::storage($e);
+        };
+
+        rest::Context $ctx = rest::Context($this->transformers, $inc);
+        Viewer::attach($req, $ctx);
+        $doc = rest::collection($this->transformers->get<PostResourceMapping>()->many($rows, $ctx));
+        $doc->with('total_count', $rows->count() as int64);
+        return $doc->response(rest::Format::negotiate($req));
+    }
+}

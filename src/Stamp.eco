@@ -1,0 +1,40 @@
+namespace EchoPack::Rest;
+
+use std::time;
+
+/**
+ * How an instant is written into a response, always in UTC. A
+ * `time::timestamp` field is written `atom` unless the field says
+ * `#[rest::time: zulu]` or `#[rest::time: date]`.
+ */
+public enum Stamp
+{
+    /**
+     * `2026-10-13T14:06:00+00:00`, whole seconds, the shape of PHP's
+     * `DATE_ATOM`.
+     */
+    case atom;
+
+    /**
+     * `2026-10-13T14:06:00Z`, RFC 3339 with a fraction of a second when
+     * there is one, what JavaScript's `toISOString` reads back.
+     */
+    case zulu;
+
+    /**
+     * `2026-10-13`, the calendar day alone.
+     */
+    case date;
+
+    public const function render(time::timestamp $t) : string
+    {
+        calendar::Zoned $at = guard calendar::Zoned::of($t, calendar::Zone::utc()) else {
+            die('rest: a timestamp beyond the calendar cannot be written');
+        };
+        return match ($this) {
+            Stamp::atom => $at->format(Patterns::$atom),
+            Stamp::zulu => $at->format(calendar::Format::rfc3339()),
+            Stamp::date => $at->local()->date->format(Patterns::$date),
+        };
+    }
+}

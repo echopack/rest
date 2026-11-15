@@ -1,0 +1,29 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+use std::time;
+
+/**
+ * A user as the API shows them. The name is computed, the email only
+ * reaches the user themselves, and the posts come along when the action
+ * loaded them.
+ */
+#[rest::model: 'user']
+#[rest::from: 'blog::User']
+public struct UserResource
+{
+    #[rest::attribute]
+    public int64 $id;
+
+    #[rest::computed]
+    public string $displayName;
+
+    #[rest::computed]
+    #[rest::optional]
+    public string? $email;
+
+    public time::timestamp? $createdAt;
+
+    #[rest::item: 'post']
+    public rest::Include<array<PostResource>> $posts;
+}

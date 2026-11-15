@@ -1,0 +1,6 @@
+namespace blog;
+
+public struct UserRepository : carbon::Repository<User, UserQuery, int64>, UserWiring
+{
+    public carbon::Session $session;
+}

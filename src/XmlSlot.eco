@@ -1,0 +1,12 @@
+namespace EchoPack::Rest;
+
+/**
+ * What the pending name is for: nothing, an element, or an attribute of
+ * the open start tag.
+ */
+internal enum XmlSlot
+{
+    case idle;
+    case key;
+    case attribute;
+}

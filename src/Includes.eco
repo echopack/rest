@@ -1,0 +1,79 @@
+namespace EchoPack::Rest;
+
+/**
+ * The include paths a request asked for, `author,comments.author`, with
+ * every prefix implied: asking for `comments.author` asks for `comments`.
+ * Names are the wire keys of the resource fields. Build one with
+ * `Allow::parse`, which checks the request against what the endpoint
+ * allows, or with `Includes::of` for paths the code chose itself.
+ */
+public struct Includes
+{
+    private map<string, bool> $paths = [];
+
+    public constructor()
+    {
+    }
+
+    /**
+     * Exactly these paths and their prefixes, unchecked.
+     */
+    public static function of(const array<string>& $paths) : Includes
+    {
+        Includes $out = Includes();
+        foreach ($paths as const &$path) {
+            $out->add($path);
+        }
+        return $out;
+    }
+
+    /**
+     * Whether `$path` was asked for, directly or as the prefix of a longer
+     * path.
+     */
+    public const function has(const string& $path) : bool
+    {
+        return $this->paths->has($path);
+    }
+
+    /**
+     * Every path, prefixes included, sorted.
+     */
+    public const function paths() : array<string>
+    {
+        array<string> $out = $this->paths->keys();
+        $out->sort();
+        return $out;
+    }
+
+    public const function empty() : bool
+    {
+        return $this->paths->count() == 0;
+    }
+
+    /**
+     * Add `$path` and each of its prefixes.
+     */
+    internal function add(const string& $path) : void
+    {
+        usize $i = 0;
+        usize $n = $path->size();
+        while ($i < $n) {
+            if ($path->byte($i) == 46) {
+                $this->paths[$path->sub(0, $i)] = true;
+            }
+            $i = $i + 1;
+        }
+        $this->paths[$path] = true;
+    }
+
+    /**
+     * Add every path of `$other`.
+     */
+    internal function merge(const Includes& $other) : void
+    {
+        foreach ($other->paths as $path => const &$_) {
+            $this->paths[$path] = true;
+        }
+    }
+}

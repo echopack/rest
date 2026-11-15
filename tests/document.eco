@@ -1,0 +1,67 @@
+use EchoPack::Rest as rest;
+
+internal function rex() : pets::PetResource
+{
+    return pets::PetResource(
+        $id: 1,
+        $name: 'Rex',
+        $shout: 'Rex',
+        $letters: .absent(),
+        $owner: .absent()
+    );
+}
+
+#[group: "unit"]
+test document_wraps_one_item {
+    $doc = rest::item(rex());
+    assert($doc->json() == '{"data":{"id":1,"name":"Rex","shout":"Rex"}}', 'json');
+    assert($doc->xml() == '<?xml version="1.0" encoding="UTF-8"?><response><data id="1"><name>Rex</name><shout>Rex</shout></data></response>', 'xml');
+}
+
+#[group: "unit"]
+test document_lists_a_collection_with_meta {
+    array<pets::PetResource> $all = [rex(), rex()];
+    $all[1]->id = 2;
+    $doc = rest::collection($all);
+    $doc->with('total_count', 2);
+    $doc->with('page', json::object());
+    assert($doc->json() == '{"total_count":2,"page":{},"data":[{"id":1,"name":"Rex","shout":"Rex"},{"id":2,"name":"Rex","shout":"Rex"}]}', 'json');
+    assert($doc->xml() == '<?xml version="1.0" encoding="UTF-8"?><response><total_count>2</total_count><page/><data><pet id="1"><name>Rex</name><shout>Rex</shout></pet><pet id="2"><name>Rex</name><shout>Rex</shout></pet></data></response>', 'xml');
+}
+
+#[group: "unit"]
+test document_empty_collection {
+    array<pets::PetResource> $none = [];
+    $doc = rest::collection($none);
+    assert($doc->json() == '{"data":[]}', 'json');
+    assert($doc->xml() == '<?xml version="1.0" encoding="UTF-8"?><response><data/></response>', 'xml');
+}
+
+#[group: "unit"]
+test document_pretty_json {
+    $doc = rest::item(rex());
+    assert($doc->json(pretty: true) == "\{\n  \"data\": \{\n    \"id\": 1,\n    \"name\": \"Rex\",\n    \"shout\": \"Rex\"\n  }\n}", 'pretty');
+}
+
+#[group: "unit"]
+test document_answers_an_http_response {
+    $doc = rest::item(rex());
+    http::Response $json = $doc->response();
+    assert($json->status == 200, 'status');
+    assert(($json->headers->get('Content-Type') ?? '') == 'application/json; charset=utf-8', 'json type');
+    http::Response $xml = $doc->response(rest::Format::xml, status: 201);
+    assert($xml->status == 201, 'created');
+    assert(($xml->headers->get('Content-Type') ?? '') == 'application/xml; charset=utf-8', 'xml type');
+    assert($xml->body->starts('<?xml'), 'xml body');
+}
+
+#[group: "unit"]
+test problem_answers_a_400 {
+    rest::Error $e = .unknown('secrets');
+    rest::Problem $p = rest::Problem::of($e);
+    assert($p->json() == '{"error":{"code":"include","message":"\'secrets\' cannot be included here"}}', 'json');
+    assert($p->xml() == '<?xml version="1.0" encoding="UTF-8"?><response><error><code>include</code><message>&apos;secrets&apos; cannot be included here</message></error></response>', 'xml');
+    http::Response $r = $p->response();
+    assert($r->status == 400, 'bad request');
+    assert(($r->headers->get('Content-Type') ?? '') == 'application/json; charset=utf-8', 'type');
+}

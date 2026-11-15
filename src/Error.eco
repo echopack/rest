@@ -1,0 +1,43 @@
+namespace EchoPack::Rest;
+
+/**
+ * Why a request's include list was refused.
+ */
+public enum Error
+{
+    /**
+     * The endpoint does not allow this path.
+     */
+    case unknown(string $path);
+
+    /**
+     * The path is not keys joined by dots.
+     */
+    case malformed(string $path);
+
+    public const function message() : string
+    {
+        return match ($this) {
+            Error::unknown($path) => "'{$path}' cannot be included here",
+            Error::malformed($path) => "'{$path}' is not an include path",
+        };
+    }
+
+    /**
+     * The path the request named.
+     */
+    public const function path() : string
+    {
+        return match ($this) {
+            Error::unknown($path) => $path,
+            Error::malformed($path) => $path,
+        };
+    }
+}
+
+namespace str;
+
+public function from(const EchoPack::Rest::Error& $e) : string
+{
+    return $e->message();
+}

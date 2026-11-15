@@ -1,0 +1,126 @@
+namespace restgen;
+
+/**
+ * How Echo names become wire names and generated names.
+ */
+public struct Names
+{
+    /**
+     * `createdAt` to `created_at`, `avatarURL` to `avatar_url`, `HTTPCode`
+     * to `http_code`. A break goes before an upper case letter that
+     * follows a lower case one or a digit, and before the last capital of
+     * a run when a lower case letter follows it.
+     */
+    public static function snake(const string& $name) : string
+    {
+        string $out = '';
+        usize $n = $name->size();
+        usize $i = 0;
+        while ($i < $n) {
+            uint8 $b = $name->byte($i);
+            if (Names::capital($b)) {
+                if ($i > 0) {
+                    uint8 $prev = $name->byte($i - 1);
+                    bool $nextLower = $i + 1 < $n && Names::lower($name->byte($i + 1));
+                    if (Names::lower($prev) || Names::digit($prev) || (Names::capital($prev) && $nextLower)) {
+                        $out->push(95);
+                    }
+                }
+                $out->push($b + 32);
+            } else {
+                $out->push($b);
+            }
+            $i = $i + 1;
+        }
+        return $out;
+    }
+
+    /**
+     * The last segment of a qualified name: `blog::UserResource` is
+     * `UserResource`.
+     */
+    public static function local(const string& $qualified) : string
+    {
+        usize $at = 0;
+        usize $i = 0;
+        usize $n = $qualified->size();
+        while ($i + 1 < $n) {
+            if ($qualified->byte($i) == 58 && $qualified->byte($i + 1) == 58) {
+                $at = $i + 2;
+            }
+            $i = $i + 1;
+        }
+        return $qualified->sub($at, $n - $at);
+    }
+
+    /**
+     * The entity name a resource goes by when nothing names it: the type's
+     * own name in snake_case, a trailing `Resource` or `Model` dropped.
+     */
+    public static function entity(const string& $qualified) : string
+    {
+        string $local = Names::local($qualified);
+        array<string> $suffixes = ['Resource', 'Model'];
+        foreach ($suffixes as $suffix) {
+            if ($local->ends($suffix) && $local->size() > $suffix->size()) {
+                return Names::snake($local->sub(0, $local->size() - $suffix->size()));
+            }
+        }
+        return Names::snake($local);
+    }
+
+    /**
+     * The namespace of a qualified name: `blog::UserResource` is `blog`,
+     * empty for a name at the root.
+     */
+    public static function space(const string& $qualified) : string
+    {
+        string $local = Names::local($qualified);
+        if ($local->size() == $qualified->size()) {
+            return '';
+        }
+        return $qualified->sub(0, $qualified->size() - $local->size() - 2);
+    }
+
+    /**
+     * `author` to `Author`, for the generated locals.
+     */
+    public static function upper(const string& $name) : string
+    {
+        return str::ucfirst($name);
+    }
+
+    /**
+     * Whether a wire name can go into the generated source as a single
+     * quoted literal. Echo's single quotes are verbatim: no quote, no
+     * backslash, no control bytes.
+     */
+    public static function literal(const string& $name) : bool
+    {
+        usize $i = 0;
+        usize $n = $name->size();
+        while ($i < $n) {
+            uint8 $b = $name->byte($i);
+            if ($b == 39 || $b == 92 || $b < 32) {
+                return false;
+            }
+            $i = $i + 1;
+        }
+        return true;
+    }
+
+    private static function capital(uint8 $b) : bool
+    {
+        return $b >= 65 && $b <= 90;
+    }
+
+    private static function lower(uint8 $b) : bool
+    {
+        return $b >= 97 && $b <= 122;
+    }
+
+    private static function digit(uint8 $b) : bool
+    {
+        return $b >= 48 && $b <= 57;
+    }
+}

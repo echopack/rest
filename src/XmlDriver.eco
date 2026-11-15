@@ -1,0 +1,253 @@
+namespace EchoPack::Rest;
+
+/**
+ * The XML driver. It streams straight into a string: there is no XML tree
+ * library to hand a document to, and the events already arrive in
+ * document order.
+ *
+ * An entity's element is its key when it has one, else the list's item
+ * name inside a list that names its items, else the name it was opened
+ * with (the root, or an entity in a list that lets elements name
+ * themselves). Attribute events are written into the start tag while it
+ * is still open, so a resource's attribute fields come first; `restgen`
+ * orders them that way.
+ */
+public struct XmlDriver : Driver
+{
+    public bool $indent = false;
+
+    /**
+     * Start the output with the `<?xml ...?>` declaration.
+     */
+    public bool $declaration = false;
+
+    private string $out = '';
+    private array<XmlFrame> $frames = array<XmlFrame>();
+    private string $pending = '';
+    private XmlSlot $slot = .idle;
+
+    public function open(const string& $name) : void
+    {
+        $this->frames->push(XmlFrame($this->start($name), ''));
+    }
+
+    public function list(const string& $item) : void
+    {
+        string $tag = $this->start('list');
+        string $named = '';
+        if ($item->empty() == false) {
+            $named = Xml::name($item);
+        }
+        $this->frames->push(XmlFrame($tag, $named));
+    }
+
+    public function close() : void
+    {
+        XmlFrame $frame = $this->frames->pop();
+        if ($frame->starting) {
+            $this->out->append('/>');
+            return;
+        }
+        if ($frame->nested && $this->indent) {
+            $this->newline();
+        }
+        $this->out->append('</');
+        $this->out->append($frame->tag);
+        $this->out->append('>');
+    }
+
+    public function key(const string& $name) : void
+    {
+        $this->pending = $name;
+        $this->slot = XmlSlot::key;
+    }
+
+    public function attribute(const string& $name) : void
+    {
+        $this->pending = $name;
+        $this->slot = XmlSlot::attribute;
+    }
+
+    public function nil() : void
+    {
+        if ($this->slot == XmlSlot::attribute) {
+            // an absent attribute is simply not written
+            $this->slot = XmlSlot::idle;
+            return;
+        }
+        $this->start('item');
+        $this->out->append('/>');
+    }
+
+    public function bool(bool $v) : void
+    {
+        if ($v) {
+            $this->scalar('true');
+        } else {
+            $this->scalar('false');
+        }
+    }
+
+    public function int(int64 $v) : void
+    {
+        $this->scalar(str::from($v));
+    }
+
+    public function float(float64 $v) : void
+    {
+        if (Number::finite($v)) {
+            $this->scalar(str::from($v));
+        } else {
+            $this->nil();
+        }
+    }
+
+    public function str(const string& $v) : void
+    {
+        $this->scalar($v);
+    }
+
+    /**
+     * Objects become elements per key, arrays become `item` elements, in
+     * the tree's own order.
+     */
+    public function value(const json::Value& $v) : void
+    {
+        if ($v->isObject()) {
+            ordered_map<string, json::Value> $fields = guard $v->asObject();
+            $this->open('item');
+            foreach ($fields as $name => const &$field) {
+                $this->key($name);
+                $this->value($field);
+            }
+            $this->close();
+            return;
+        }
+        if ($v->isArray()) {
+            array<json::Value> $items = guard $v->asArray();
+            $this->list('item');
+            foreach ($items as const &$item) {
+                $this->value($item);
+            }
+            $this->close();
+            return;
+        }
+        $this->leaf($v);
+    }
+
+    /**
+     * The document so far. Read it once the outermost entity is closed.
+     */
+    public const function take() : string
+    {
+        return $this->out;
+    }
+
+    private function leaf(const json::Value& $v) : void
+    {
+        match ($v) {
+            json::Value::boolean($b) => {
+                $this->bool($b);
+            },
+            json::Value::integer($n) => {
+                $this->int($n);
+            },
+            json::Value::floating($n) => {
+                $this->float($n);
+            },
+            json::Value::text($s) => {
+                $this->str($s);
+            },
+            else => {
+                $this->nil();
+            },
+        }
+    }
+
+    private function scalar(const string& $text) : void
+    {
+        if ($this->slot == XmlSlot::attribute) {
+            usize $depth = $this->frames->count();
+            if ($depth > 0 && $this->frames[$depth - 1]->starting) {
+                $this->out->append(' ');
+                $this->out->append(Xml::name($this->pending));
+                $this->out->append('="');
+                Xml::escapeInto($this->out, $text);
+                $this->out->append('"');
+                $this->slot = XmlSlot::idle;
+                return;
+            }
+            // the start tag is already closed, so it lands as an element
+            $this->slot = XmlSlot::key;
+        }
+        string $tag = $this->start('item');
+        $this->out->append('>');
+        Xml::escapeInto($this->out, $text);
+        $this->out->append('</');
+        $this->out->append($tag);
+        $this->out->append('>');
+    }
+
+    /**
+     * Begin the next element: its start tag up to the name, left open for
+     * attributes. Returns the tag.
+     */
+    private function start(const string& $fallback) : string
+    {
+        string $tag = $this->element($fallback);
+        $this->child();
+        $this->out->append('<');
+        $this->out->append($tag);
+        return $tag;
+    }
+
+    /**
+     * The element name for whatever is written next, consuming the
+     * pending key.
+     */
+    private function element(const string& $fallback) : string
+    {
+        if ($this->slot != XmlSlot::idle) {
+            $this->slot = XmlSlot::idle;
+            return Xml::name($this->pending);
+        }
+        usize $depth = $this->frames->count();
+        if ($depth > 0 && $this->frames[$depth - 1]->item->empty() == false) {
+            return $this->frames[$depth - 1]->item;
+        }
+        return Xml::name($fallback);
+    }
+
+    /**
+     * An element is about to start inside the innermost frame: close that
+     * frame's start tag and break the line. At the root, write the
+     * declaration if one is wanted.
+     */
+    private function child() : void
+    {
+        usize $depth = $this->frames->count();
+        if ($depth == 0) {
+            if ($this->declaration && $this->out->empty()) {
+                $this->out->append('<?xml version="1.0" encoding="UTF-8"?>');
+                if ($this->indent) {
+                    $this->out->append("\n");
+                }
+            }
+            return;
+        }
+        if ($this->frames[$depth - 1]->starting) {
+            $this->out->append('>');
+            $this->frames[$depth - 1]->starting = false;
+        }
+        $this->frames[$depth - 1]->nested = true;
+        if ($this->indent) {
+            $this->newline();
+        }
+    }
+
+    private function newline() : void
+    {
+        $this->out->append("\n");
+        $this->out->append(str::repeat('  ', $this->frames->count()));
+    }
+}

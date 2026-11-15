@@ -1,0 +1,55 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+
+/**
+ * Posts with an excerpt of a configured length, and statistics on request.
+ * A draft's title is marked for its author and hidden from everyone else.
+ */
+#[atomic]
+public class PostTransformer : PostResourceMapping
+{
+    public const Excerpt $excerpt;
+
+    public constructor(Excerpt $excerpt)
+    {
+        $this->excerpt = $excerpt;
+    }
+
+    public function excerpt(const Post& $source, rest::Context& $ctx) : string
+    {
+        usize $length = $this->excerpt->length;
+        if ($source->body->size() <= $length) {
+            return $source->body;
+        }
+        string $cut = $source->body->sub(0, $length);
+        return "{$cut}…";
+    }
+
+    public function stats(const Post& $source, rest::Context& $ctx) : StatsResource
+    {
+        int64 $words = str::split($source->body, ' ')->count() as int64;
+        int64? $comments = null;
+        if ($source->comments->loaded()) {
+            $comments = $source->comments->count() as int64;
+        }
+        return StatsResource($words: $words, $comments: $comments);
+    }
+
+    public function refine(PostResource& $resource, const Post& $source, rest::Context& $ctx) : void
+    {
+        if ($source->status != Status::draft) {
+            return;
+        }
+        Viewer? $me = $ctx->find<Viewer>();
+        if ($me != null) {
+            Viewer $viewer = guard $me;
+            if ($viewer->id == $source->authorId) {
+                $resource->title = "[draft] {$source->title}";
+                return;
+            }
+        }
+        $resource->title = '';
+        $resource->excerpt = '';
+    }
+}

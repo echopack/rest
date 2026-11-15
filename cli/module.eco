@@ -1,0 +1,23 @@
+/*
+ * restgen: writes the encoding and the mapping for #[rest::model] resources.
+ *
+ * Reads the module's declarations through `echoc -p decls`, checks every
+ * #[rest::...] attribute, and writes `.rest/models.eco`: per resource its
+ * `encode` overload, and per resource with #[rest::from] the mapping
+ * interface its transformer conforms to. A module of its own, so a broken
+ * checkout of the code it generates for cannot stop the tool that
+ * regenerates it.
+ */
+
+#[module: "restgen"]
+#[version: "0.2.0"] // x-release-please-version
+#[sources: "src/*.eco"]
+#[requires: "echolang/libjson" { version: "^0.2", source: git "https://github.com/echolang/libjson" }]
+
+#[target: exe { name: "restgen", entry: "main.eco" }] {
+    #[sources: "main.eco"]
+}
+
+#[target: test] {
+    #[sources: "tests/*.eco"]
+}

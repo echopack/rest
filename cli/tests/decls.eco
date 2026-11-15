@@ -1,0 +1,207 @@
+/**
+ * Builders for decls JSON, so a test reads like the declarations it
+ * stands for.
+ */
+
+namespace restgen;
+
+internal function decls(const array<json::Value>& $declarations) : json::Value
+{
+    json::Value $module = json::object();
+    $module['name'] = 'app';
+    json::Value $list = json::arr();
+    foreach ($declarations as const &$d) {
+        $list[] = $d->clone();
+    }
+    $module['declarations'] = $list;
+    json::Value $modules = json::arr();
+    $modules[] = $module;
+    json::Value $root = json::object();
+    $root['modules'] = $modules;
+    return $root;
+}
+
+internal function type(const string& $kind, const string& $qualified, const array<json::Value>& $tools, const array<json::Value>& $fields) : json::Value
+{
+    json::Value $d = json::object();
+    $d['kind'] = $kind;
+    $d['name'] = Names::local($qualified);
+    $d['qualified'] = $qualified;
+    $d['visibility'] = 'public';
+    $d['file'] = 'a.eco';
+    $d['line'] = 1;
+    $d['tools'] = list($tools);
+    $d['generics'] = json::arr();
+    $d['constructors'] = json::arr();
+    $d['fields'] = list($fields);
+    return $d;
+}
+
+internal function list(const array<json::Value>& $items) : json::Value
+{
+    json::Value $out = json::arr();
+    foreach ($items as const &$i) {
+        $out[] = $i->clone();
+    }
+    return $out;
+}
+
+internal function field(const string& $name, json::Value $type, const array<json::Value>& $tools) : json::Value
+{
+    json::Value $f = json::object();
+    $f['name'] = $name;
+    $f['visibility'] = 'public';
+    $f['static'] = false;
+    $f['line'] = 3;
+    $f['type'] = $type;
+    $f['default'] = false;
+    $f['tools'] = list($tools);
+    return $f;
+}
+
+internal function bare(const string& $name, json::Value $type) : json::Value
+{
+    array<json::Value> $none = [];
+    return field($name, $type, $none);
+}
+
+internal function tool(const string& $name) : json::Value
+{
+    json::Value $t = json::object();
+    $t['namespace'] = 'rest';
+    $t['name'] = $name;
+    $t['value'] = json::nil();
+    return $t;
+}
+
+internal function tool(const string& $name, const string& $text) : json::Value
+{
+    json::Value $t = tool($name);
+    json::Value $v = json::object();
+    $v['kind'] = 'string';
+    $v['text'] = $text;
+    $t['value'] = $v;
+    return $t;
+}
+
+internal function prim(const string& $name) : json::Value
+{
+    json::Value $t = json::object();
+    $t['kind'] = 'prim';
+    $t['name'] = $name;
+    return $t;
+}
+
+internal function text() : json::Value
+{
+    json::Value $t = json::object();
+    $t['kind'] = 'string';
+    return $t;
+}
+
+internal function named(const string& $name) : json::Value
+{
+    json::Value $t = json::object();
+    $t['kind'] = 'named';
+    $t['name'] = $name;
+    return $t;
+}
+
+internal function generic(const string& $name, json::Value $arg) : json::Value
+{
+    json::Value $t = named($name);
+    json::Value $args = json::arr();
+    $args[] = $arg;
+    $t['args'] = $args;
+    return $t;
+}
+
+internal function arrayOf(json::Value $of) : json::Value
+{
+    json::Value $t = json::object();
+    $t['kind'] = 'array';
+    $t['of'] = $of;
+    return $t;
+}
+
+internal function optionalOf(json::Value $of) : json::Value
+{
+    json::Value $t = json::object();
+    $t['kind'] = 'optional';
+    $t['of'] = $of;
+    return $t;
+}
+
+internal function include(json::Value $of) : json::Value
+{
+    return generic('EchoPack::Rest::Include', $of);
+}
+
+/**
+ * A blog in decls: carbon models User, Post and Comment, a plain struct
+ * Weather with a resolved forecast list, and resources for each.
+ */
+internal function blog() : array<json::Value>
+{
+    array<json::Value> $none = [];
+    array<json::Value> $out = [];
+    $out[] = type('class', 'app::User', $none, [
+        bare('link', named('carbon::Link')),
+        bare('id', prim('int64')),
+        bare('name', text()),
+        bare('posts', generic('carbon::Many', named('app::Post'))),
+    ]);
+    $out[] = type('class', 'app::Post', $none, [
+        bare('id', prim('int64')),
+        bare('title', text()),
+        bare('createdAt', named('std::time::timestamp')),
+        bare('author', generic('carbon::One', named('app::User'))),
+        bare('comments', generic('carbon::Many', named('app::Comment'))),
+    ]);
+    $out[] = type('class', 'app::Comment', $none, [
+        bare('id', prim('int64')),
+        bare('post', generic('carbon::One', named('app::Post'))),
+    ]);
+    $out[] = type('struct', 'app::Forecast', $none, [
+        bare('day', named('calendar::Date')),
+    ]);
+    $out[] = type('struct', 'app::Weather', $none, [
+        bare('city', text()),
+        bare('forecasts', generic('EchoPack::Rest::Resolved', arrayOf(named('app::Forecast')))),
+        bare('today', optionalOf(named('app::Forecast'))),
+    ]);
+
+    $out[] = type('struct', 'app::UserResource', [tool('model'), tool('from', 'app::User')], [
+        field('id', prim('int64'), [tool('attribute')]),
+        bare('name', text()),
+        field('displayName', text(), [tool('computed')]),
+        bare('posts', include(arrayOf(named('app::PostResource')))),
+    ]);
+    $out[] = type('struct', 'app::PostResource', [tool('model'), tool('from', 'app::Post')], [
+        bare('id', prim('int64')),
+        field('headline', text(), [tool('source', 'title')]),
+        field('createdAt', named('std::time::timestamp'), [tool('time', 'zulu')]),
+        bare('author', include(named('app::UserResource'))),
+        field('comments', include(arrayOf(named('app::CommentResource'))), [tool('item', 'comment')]),
+        field('stats', include(prim('int64')), [tool('computed', 'statistics')]),
+    ]);
+    $out[] = type('struct', 'app::CommentResource', [tool('model'), tool('from', 'app::Comment')], [
+        bare('id', prim('int64')),
+        bare('post', include(named('app::PostResource'))),
+    ]);
+    $out[] = type('struct', 'app::ForecastResource', [tool('model'), tool('from', 'app::Forecast')], [
+        bare('day', named('calendar::Date')),
+    ]);
+    $out[] = type('struct', 'app::WeatherResource', [tool('model'), tool('from', 'app::Weather')], [
+        bare('city', text()),
+        bare('forecasts', include(arrayOf(named('app::ForecastResource')))),
+        bare('today', optionalOf(named('app::ForecastResource'))),
+    ]);
+    return $out;
+}
+
+internal function problems(const array<json::Value>& $declarations) : array<string>
+{
+    array<string> $only = [];
+    return Program::read(decls($declarations), $only)->problems;
+}

@@ -1,0 +1,73 @@
+namespace EchoPack::Rest;
+
+/**
+ * A resource field that is written only when the request includes it: a
+ * relation, a nested resource, or a computed field worth its cost only on
+ * demand. A generated mapping makes it present when the request asks for
+ * its key and, for a relation, the action loaded it. An absent include
+ * writes no key at all; a present one writes its value, or null when it is
+ * `none()`.
+ *
+ * ```echo
+ * public rest::Include<UserResource> $author;           // carbon::One<User> on the source
+ * public rest::Include<array<CommentResource>> $comments; // carbon::Many<Comment>
+ * ```
+ */
+public struct Include<T>
+{
+    internal T? $value;
+    internal bool $present;
+
+    public constructor()
+    {
+        $this->value = null;
+        $this->present = false;
+    }
+
+    /**
+     * Left out: the key is not written.
+     */
+    public static function absent() : Include<T>
+    {
+        return Include<T>();
+    }
+
+    /**
+     * Resolved and empty: the key is written with null, like a belongs to
+     * whose row is gone.
+     */
+    public static function none() : Include<T>
+    {
+        Include<T> $i = Include<T>();
+        $i->present = true;
+        return $i;
+    }
+
+    /**
+     * Present: the key is written with `$value`, or with null when it is
+     * null.
+     */
+    public static function of(T? $value) : Include<T>
+    {
+        Include<T> $i = Include<T>();
+        $i->value = mv $value;
+        $i->present = true;
+        return $i;
+    }
+
+    /**
+     * Whether the key is written.
+     */
+    public const function present() : bool
+    {
+        return $this->present;
+    }
+
+    /**
+     * The value, null when it is absent or none.
+     */
+    public const function get() : T?
+    {
+        return $this->value;
+    }
+}

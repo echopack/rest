@@ -1,0 +1,15 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+
+/**
+ * The front page: a headline, a count, and what the action resolves when
+ * the request asks for it.
+ */
+public struct Digest
+{
+    public string $headline;
+    public int64 $published;
+    public rest::Resolved<array<Post>> $latest = .unresolved();
+    public rest::Resolved<User> $editor = .unresolved();
+}

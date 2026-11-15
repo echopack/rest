@@ -1,0 +1,56 @@
+use EchoPack::Rest as rest;
+
+#[group: "unit"]
+test includes_imply_their_prefixes {
+    rest::Includes $inc = rest::Includes::of(['comments.author.avatar', 'tags']);
+    assert($inc->has('comments'), 'prefix');
+    assert($inc->has('comments.author'), 'inner prefix');
+    assert($inc->has('comments.author.avatar'), 'path');
+    assert($inc->has('tags'), 'other');
+    assert(!$inc->has('author'), 'not asked');
+    assert(str::join($inc->paths(), ',') == 'comments,comments.author,comments.author.avatar,tags', 'sorted');
+    assert(rest::Includes()->empty(), 'empty');
+}
+
+#[group: "unit"]
+test allow_parses_a_request {
+    rest::Allow $allow = rest::Allow::of(['author', 'comments.author']);
+    rest::Includes $inc = guard $allow->parse(' comments.author , ,author');
+    assert(str::join($inc->paths(), ',') == 'author,comments,comments.author', 'parsed');
+    rest::Includes $none = guard $allow->parse('');
+    assert($none->empty(), 'nothing asked');
+    assert($allow->allows('comments'), 'prefix allowed');
+}
+
+#[group: "unit"]
+test allow_refuses_what_it_does_not_list {
+    rest::Allow $allow = rest::Allow::of(['author']);
+    result<rest::Includes, rest::Error> $r = $allow->parse('author,secrets');
+    assert($r->failed(), 'refused');
+    rest::Error $e = $r->failure();
+    assert($e->path() == 'secrets', 'named');
+    assert("{$e}" == "'secrets' cannot be included here", 'message');
+    rest::Error $deep = $allow->parse('author.avatar')->failure();
+    assert($deep->path() == 'author.avatar', 'deeper than allowed');
+}
+
+#[group: "unit"]
+test allow_refuses_malformed_paths {
+    rest::Allow $allow = rest::Allow::of(['author']);
+    array<string> $bad = ['a..b', '.a', 'a.', 'a b', 'a;drop', 'ä'];
+    foreach ($bad as const &$text) {
+        result<rest::Includes, rest::Error> $r = $allow->parse($text);
+        assert($r->failed(), 'refused');
+        rest::Error $e = $r->failure();
+        assert($e->message()->contains('is not an include path'), 'malformed');
+    }
+}
+
+#[group: "unit"]
+test allow_always_includes {
+    rest::Allow $allow = rest::Allow::of(['comments'])->always(['author']);
+    rest::Includes $inc = guard $allow->parse('');
+    assert($inc->has('author'), 'always');
+    rest::Includes $asked = guard $allow->parse('author,comments');
+    assert(str::join($asked->paths(), ',') == 'author,comments', 'allowed by always');
+}

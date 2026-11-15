@@ -1,0 +1,55 @@
+namespace EchoPack::Rest;
+
+/**
+ * A slot on a plain source struct for data the action resolves on demand,
+ * the struct counterpart of carbon's `One` and `Many`. A mapping writes the
+ * resource's include only when the request asks for it and the slot is
+ * loaded, so an unresolved slot costs nothing on the wire.
+ *
+ * ```echo
+ * public struct Weather
+ * {
+ *     public string $city;
+ *     public rest::Resolved<Forecast> $forecast = .unresolved();
+ *     public rest::Resolved<array<Station>> $stations = .unresolved();
+ * }
+ * ```
+ */
+public struct Resolved<T>
+{
+    internal T? $value;
+    internal bool $loaded;
+
+    public constructor()
+    {
+        $this->value = null;
+        $this->loaded = false;
+    }
+
+    public static function unresolved() : Resolved<T>
+    {
+        return Resolved<T>();
+    }
+
+    /**
+     * The resolved value, null when there is none or it was never resolved.
+     */
+    public const function get() : T?
+    {
+        return $this->value;
+    }
+
+    public const function loaded() : bool
+    {
+        return $this->loaded;
+    }
+
+    /**
+     * Resolve the slot, to null when the data does not exist.
+     */
+    public function set(T? $value) : void
+    {
+        $this->value = mv $value;
+        $this->loaded = true;
+    }
+}

@@ -1,0 +1,84 @@
+namespace restgen;
+
+/**
+ * A resource field's type, classified for the encoder.
+ */
+public class Ty
+{
+    public Kind $kind;
+
+    /**
+     * The type as Echo source spells it.
+     */
+    public string $spell;
+
+    /**
+     * The qualified name of a resource, an enum or a time type.
+     */
+    public string $name = '';
+
+    /**
+     * The element of an optional, list, dict or include; the backing of a
+     * backed enum.
+     */
+    public Ty? $of = null;
+
+    /**
+     * A dict that is an `ordered_map`, whose keys keep their order.
+     */
+    public bool $ordered = false;
+
+    /**
+     * An integer that is not int64 or a float that is not float64, so the
+     * driver call needs a cast.
+     */
+    public bool $cast = false;
+
+    public const function element() : Ty
+    {
+        Ty $of = guard $this->of;
+        return $of;
+    }
+
+    /**
+     * The type under any optionals.
+     */
+    public const function bare() : Ty
+    {
+        if ($this->kind == Kind::optional) {
+            return $this->element()->bare();
+        }
+        return $this;
+    }
+
+    /**
+     * A single value a driver writes in one call, the kind an attribute
+     * can hold.
+     */
+    public const function scalar() : bool
+    {
+        Ty $bare = $this->bare();
+        return match ($bare->kind) {
+            Kind::boolean => true,
+            Kind::integer => true,
+            Kind::floating => true,
+            Kind::text => true,
+            Kind::backed => true,
+            Kind::plain => true,
+            Kind::time => true,
+            else => false,
+        };
+    }
+
+    public const function encodable() : bool
+    {
+        return match ($this->kind) {
+            Kind::unknown => false,
+            Kind::optional => $this->element()->encodable(),
+            Kind::list => $this->element()->encodable(),
+            Kind::dict => $this->element()->encodable(),
+            Kind::include => $this->element()->encodable(),
+            else => true,
+        };
+    }
+}

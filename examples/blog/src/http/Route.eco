@@ -1,0 +1,11 @@
+namespace blog;
+
+/**
+ * Where an action answers: the container keeps it as the action's meta,
+ * and the server registers one route per tagged action.
+ */
+public struct Route
+{
+    public http::Method $method;
+    public string $path;
+}

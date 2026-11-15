@@ -1,0 +1,85 @@
+namespace EchoPack::Rest;
+
+/**
+ * The envelope an endpoint answers with: top-level meta first, then the
+ * resource (or the list of resources) under `data`. Nexus's
+ * `createResponse` and `createCollectionResponse`, minus the choice of
+ * format, which is made when the document is rendered.
+ */
+
+public struct Document<M>
+{
+    /**
+     * The root element for formats that need one. JSON has no use for it.
+     */
+    public string $root = 'response';
+
+    /**
+     * What goes under `data`: one resource, or an `array` of them.
+     */
+    private M $data;
+    private ordered_map<string, json::Value> $meta;
+
+    public constructor(mv M $data)
+    {
+        $this->data = mv $data;
+        $this->meta = ordered_map<string, json::Value>();
+    }
+
+    /**
+     * Add a top-level key next to `data`, like Nexus's `$additionalData`:
+     * `total_count`, `filter_count`. Setting a key twice keeps the first
+     * position and the last value.
+     */
+    public function with(const string& $key, json::Value $value) : void
+    {
+        $this->meta[$key] = $value;
+    }
+
+    /**
+     * Walk the document into any driver.
+     */
+    public const function render<D : Driver>(D& $d) : void
+    {
+        $d->open($this->root);
+        foreach ($this->meta as $key => const &$value) {
+            $d->key($key);
+            $d->value($value);
+        }
+        $d->key('data');
+        encode($this->data, $d);
+        $d->close();
+    }
+
+    /**
+     * The document as a libjson tree, to edit further before dumping.
+     */
+    public const function tree() : json::Value
+    {
+        JsonDriver $d = JsonDriver();
+        $this->render($d);
+        return $d->take();
+    }
+
+    public const function json(pretty: bool $pretty = false) : string
+    {
+        return Format::json->body($this, $pretty);
+    }
+
+    public const function xml(indent: bool $indent = false) : string
+    {
+        return Format::xml->body($this, $indent);
+    }
+
+    /**
+     * An http response in the given format, with its content type set.
+     */
+    public const function response(
+        Format $format = Format::json,
+        pretty: bool $pretty = false,
+        status: int32 $status = 200
+    ) : http::Response
+    {
+        return $format->response($this, $status, $pretty);
+    }
+}

@@ -1,0 +1,75 @@
+namespace EchoPack::Rest;
+
+/**
+ * XML spelling rules: text escaping and element names.
+ */
+public struct Xml
+{
+    /**
+     * Escape text for element content and attribute values alike.
+     */
+    public static function escape(const string& $text) : string
+    {
+        string $out = '';
+        $out->reserve($text->size());
+        Xml::escapeInto($out, $text);
+        return $out;
+    }
+
+    /**
+     * `escape`, appended to `$out` without a string of its own.
+     */
+    public static function escapeInto(string& $out, const string& $text) : void
+    {
+        usize $i = 0;
+        usize $n = $text->size();
+        while ($i < $n) {
+            uint8 $b = $text->byte($i);
+            if ($b == 38) {
+                $out->append('&amp;');
+            } else if ($b == 60) {
+                $out->append('&lt;');
+            } else if ($b == 62) {
+                $out->append('&gt;');
+            } else if ($b == 34) {
+                $out->append('&quot;');
+            } else if ($b == 39) {
+                $out->append('&apos;');
+            } else {
+                $out->push($b);
+            }
+            $i = $i + 1;
+        }
+    }
+
+    /**
+     * A key as a legal element name: letters, digits, `_`, `-` and `.`
+     * survive, anything else becomes `_`, and a name that would start
+     * with a digit, `-` or `.` gets a leading `_`.
+     */
+    public static function name(const string& $raw) : string
+    {
+        if ($raw->empty()) {
+            return '_';
+        }
+        string $out = '';
+        uint8 $first = $raw->byte(0);
+        if (($first >= 48 && $first <= 57) || $first == 45 || $first == 46) {
+            $out->append('_');
+        }
+        usize $i = 0;
+        usize $n = $raw->size();
+        while ($i < $n) {
+            uint8 $b = $raw->byte($i);
+            bool $letter = ($b >= 65 && $b <= 90) || ($b >= 97 && $b <= 122);
+            bool $digit = $b >= 48 && $b <= 57;
+            if ($letter || $digit || $b == 95 || $b == 45 || $b == 46 || $b >= 128) {
+                $out->push($b);
+            } else {
+                $out->append('_');
+            }
+            $i = $i + 1;
+        }
+        return $out;
+    }
+}

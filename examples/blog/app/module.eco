@@ -1,0 +1,21 @@
+/*
+ * blog-app: the blog example as an HTTP server, on carbon's MySQL driver.
+ *
+ * A module of its own so the blog itself never depends on the driver, the
+ * same split as carbon's blog example.
+ */
+
+#[module: "blog-app"]
+#[version: "0.1.0"]
+
+#[depends: ".."]
+#[depends: "../../../../carbon/drivers/mysql"]
+#[requires: "echopack/hydrahon" { version: "^0.1", source: git "https://github.com/echopack/hydrahon" }]
+#[requires: "echolang/libhttp" { version: "^0.2", source: git "https://github.com/echolang/libhttp" }]
+// TEMPORARY: the local checkout, as carbon-mysql has it; then
+// back to #[requires: "echolang/libmysql" { version: "^0.1.2", source: git "https://github.com/echolang/libmysql" }]
+#[depends: "../../../../libmysql"]
+
+#[sources: "main.eco"]
+
+#[target: exe { name: "blog", entry: "main.eco" }]

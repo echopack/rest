@@ -1,0 +1,61 @@
+use EchoPack::Rest as rest;
+
+#[group: "unit"]
+test json_builds_nested_objects_and_lists {
+    rest::JsonDriver $d = rest::JsonDriver();
+    $d->open('user');
+    $d->attribute('id');
+    $d->int(7);
+    $d->key('name');
+    $d->str('Ma"rio');
+    $d->key('tags');
+    $d->list('tag');
+    $d->str('echo');
+    $d->str('json');
+    $d->close();
+    $d->key('team');
+    $d->open('team');
+    $d->key('active');
+    $d->bool(true);
+    $d->close();
+    $d->key('avatar');
+    $d->nil();
+    $d->close();
+    assert(json::dump($d->take()) == '{"id":7,"name":"Ma\\"rio","tags":["echo","json"],"team":{"active":true},"avatar":null}', 'compact');
+}
+
+#[group: "unit"]
+test json_turns_non_finite_floats_into_null {
+    rest::JsonDriver $d = rest::JsonDriver();
+    float64 $zero = 0.0;
+    $d->list('n');
+    $d->float(1.5);
+    $d->float(1.0 / $zero);
+    $d->float($zero / $zero);
+    $d->close();
+    assert(json::dump($d->take()) == '[1.5,null,null]', 'finite only');
+}
+
+#[group: "unit"]
+test json_inserts_free_form_values {
+    json::Value $extra = json::object();
+    $extra['a'] = 1;
+    rest::JsonDriver $d = rest::JsonDriver();
+    $d->open('x');
+    $d->key('extra');
+    $d->value($extra);
+    $d->close();
+    $extra['b'] = 2;
+    assert(json::dump($d->take()) == '{"extra":{"a":1}}', 'copied, not shared');
+}
+
+#[group: "unit"]
+test json_empty_containers {
+    rest::JsonDriver $d = rest::JsonDriver();
+    $d->open('x');
+    $d->key('list');
+    $d->list('i');
+    $d->close();
+    $d->close();
+    assert(json::dump($d->take()) == '{"list":[]}', 'empty list');
+}

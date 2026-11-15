@@ -1,0 +1,49 @@
+use EchoPack::Rest as rest;
+use std::time;
+
+internal function at(int64 $secs) : time::timestamp
+{
+    return time::timestamp::from_unix_secs($secs);
+}
+
+internal function written<T>(const T& $v) : string
+{
+    rest::JsonDriver $d = rest::JsonDriver();
+    rest::encode($v, $d);
+    return json::dump($d->take());
+}
+
+#[group: "unit"]
+test stamps_the_epoch {
+    assert(rest::Stamp::atom->render(at(0)) == '1970-01-01T00:00:00+00:00', 'atom');
+    assert(rest::Stamp::zulu->render(at(0)) == '1970-01-01T00:00:00Z', 'zulu');
+    assert(rest::Stamp::date->render(at(0)) == '1970-01-01', 'date');
+}
+
+#[group: "unit"]
+test stamps_known_instants {
+    assert(rest::Stamp::atom->render(at(1760364360)) == '2025-10-13T14:06:00+00:00', 'an afternoon');
+    assert(rest::Stamp::atom->render(at(951782400)) == '2000-02-29T00:00:00+00:00', 'leap day 2000');
+    assert(rest::Stamp::atom->render(at(4107542399)) == '2100-02-28T23:59:59+00:00', '2100 is no leap year');
+    assert(rest::Stamp::atom->render(at(-1)) == '1969-12-31T23:59:59+00:00', 'one second before');
+    assert(rest::Stamp::date->render(at(-2208988800)) == '1900-01-01', '1900');
+    assert(rest::Stamp::zulu->render(at(0) + time::duration::millis(250)) == '1970-01-01T00:00:00.250Z', 'fraction');
+}
+
+#[group: "unit"]
+test encodes_time_types {
+    assert(written(at(1760364360)) == '"2025-10-13T14:06:00+00:00"', 'timestamp');
+    calendar::Date $day = guard calendar::Date::of(2026, 1, 2);
+    assert(written($day) == '"2026-01-02"', 'date');
+    calendar::DateTime $wall = guard calendar::DateTime::of(2026, 1, 2, 9, 30);
+    assert(written($wall) == '"2026-01-02T09:30:00"', 'wall clock');
+}
+
+#[group: "unit"]
+test encodes_includes {
+    rest::Include<int64> $some = .of(3);
+    rest::Include<int64> $none = .none();
+    assert(written($some) == '3', 'value');
+    assert(written($none) == 'null', 'null');
+    assert(rest::Include<int64>::absent()->present() == false, 'absent');
+}

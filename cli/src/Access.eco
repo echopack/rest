@@ -1,0 +1,27 @@
+namespace restgen;
+
+/**
+ * How the source holds what a resource field is filled from.
+ */
+public enum Access
+{
+    /**
+     * A field of its own type: always there.
+     */
+    case plain;
+
+    /**
+     * `carbon::One<T>`: there once loaded.
+     */
+    case one;
+
+    /**
+     * `carbon::Many<T>`: there once loaded.
+     */
+    case many;
+
+    /**
+     * `rest::Resolved<T>`: there once the action resolved it.
+     */
+    case resolved;
+}

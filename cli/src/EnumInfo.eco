@@ -1,0 +1,17 @@
+namespace restgen;
+
+/**
+ * An enum a resource field can hold: its cases, and its backing when it
+ * has one.
+ */
+public struct EnumInfo
+{
+    public string $qualified;
+
+    /**
+     * The backing type, null for an enum without one.
+     */
+    public Ty? $backing;
+    public array<string> $cases;
+    public bool $payload;
+}

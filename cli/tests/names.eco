@@ -1,0 +1,34 @@
+namespace restgen;
+
+#[group: "unit"]
+test snake_case_keys {
+    assert(Names::snake('createdAt') == 'created_at', 'camel');
+    assert(Names::snake('id') == 'id', 'one word');
+    assert(Names::snake('avatarURL') == 'avatar_url', 'trailing acronym');
+    assert(Names::snake('HTTPCode') == 'http_code', 'leading acronym');
+    assert(Names::snake('line2Total') == 'line2_total', 'digit');
+    assert(Names::snake('already_snake') == 'already_snake', 'untouched');
+}
+
+#[group: "unit"]
+test entity_names {
+    assert(Names::entity('blog::UserResource') == 'user', 'Resource dropped');
+    assert(Names::entity('shop::LineItemModel') == 'line_item', 'Model dropped');
+    assert(Names::entity('Resource') == 'resource', 'nothing left to drop');
+    assert(Names::local('a::b::Point') == 'Point', 'local');
+}
+
+#[group: "unit"]
+test namespaces_of_names {
+    assert(Names::space('a::b::Point') == 'a::b', 'nested');
+    assert(Names::space('blog::User') == 'blog', 'one');
+    assert(Names::space('Point') == '', 'root');
+    assert(Names::upper('author') == 'Author', 'upper');
+}
+
+#[group: "unit"]
+test literal_keys {
+    assert(Names::literal('created_at'), 'plain');
+    assert(Names::literal('a b'), 'space is fine');
+    assert(!Names::literal("it's"), 'quote');
+}

@@ -1,0 +1,97 @@
+namespace EchoPack::Rest;
+
+/**
+ * The formats this library ships a driver for, backed by their content
+ * type.
+ */
+public enum Format : string
+{
+    case json = 'application/json';
+    case xml = 'application/xml';
+
+    /**
+     * Pick a format from an Accept header: XML only when the range it
+     * prefers most (highest quality, the first listed on a tie) is
+     * `application/xml` or `text/xml`, JSON for everything else. A browser
+     * asks for `text/html` first and XML only at a lower quality, so it gets
+     * JSON.
+     */
+    public static function negotiate(const string& $accept) : Format
+    {
+        float64 $best = 0.0;
+        bool $xml = false;
+        foreach (str::split($accept, ',') as const &$raw) {
+            string $part = string::from(str::trim($raw));
+            $part = string::from(str::lower($part));
+            string $type = $part;
+            float64 $q = 1.0;
+            usize $semi = $part->find(';');
+            if ($semi < $part->size()) {
+                $type = string::from(str::trim($part->sub(0, $semi)));
+                foreach (str::split($part->sub($semi + 1, $part->size() - $semi - 1), ';') as const &$p) {
+                    string $param = string::from(str::trim($p));
+                    if ($param->starts('q=')) {
+                        $q = str::float($param->sub(2, $param->size() - 2)) ?? 0.0;
+                    }
+                }
+            }
+            // strictly higher, so the first listed wins ties
+            if ($type->empty() || $q <= $best) {
+                continue;
+            }
+            $best = $q;
+            $xml = $type == 'application/xml' || $type == 'text/xml';
+        }
+        if ($xml) {
+            return Format::xml;
+        }
+        return Format::json;
+    }
+
+    /**
+     * `negotiate` on the request's Accept header, JSON when it has none.
+     */
+    public static function negotiate(const http::Request& $req) : Format
+    {
+        return Format::negotiate($req->header('Accept') ?? '');
+    }
+
+    /**
+     * The `Content-Type` header value for a body in this format.
+     */
+    public const function contentType() : string
+    {
+        return "{$this->value()}; charset=utf-8";
+    }
+
+    /**
+     * `$doc` written in this format: anything with a `render<D : Driver>`,
+     * such as a `Document` or a `Problem`. Pretty JSON is indented, pretty
+     * XML is too.
+     */
+    public const function body<R>(const R& $doc, bool $pretty) : string
+    {
+        if ($this == Format::xml) {
+            XmlDriver $x = XmlDriver($indent: $pretty, $declaration: true);
+            $doc->render($x);
+            return $x->take();
+        }
+        JsonDriver $j = JsonDriver();
+        $doc->render($j);
+        if ($pretty) {
+            return json::pretty($j->take());
+        }
+        return json::dump($j->take());
+    }
+
+    /**
+     * An http response with `$doc` in this format, its status and content
+     * type set.
+     */
+    public const function response<R>(const R& $doc, int32 $status, bool $pretty) : http::Response
+    {
+        http::Response $r = http::Response($status, $this->body($doc, $pretty));
+        $r->header('Content-Type', $this->contentType());
+        return $r;
+    }
+}

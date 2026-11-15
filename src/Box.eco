@@ -1,0 +1,15 @@
+namespace EchoPack::Rest;
+
+/**
+ * An owning box, so a mapping (an interface value) can sit in `erased`.
+ */
+#[atomic]
+internal class Box<T>
+{
+    internal T $value;
+
+    internal constructor(T $value)
+    {
+        $this->value = $value;
+    }
+}

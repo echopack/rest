@@ -1,0 +1,31 @@
+namespace blog;
+
+use std::time;
+
+#[carbon::model: 'users']
+public class User : carbon::Model<User, UserRepository>
+{
+    public carbon::Link $link = .detached();
+
+    #[carbon::key]
+    public int64 $id = 0;
+    public string $email;
+    public string $firstName;
+    public string $lastName;
+
+    /**
+     * Whether everyone may see the last name in full.
+     */
+    public bool $showLastName = false;
+
+    #[carbon::created]
+    public time::timestamp? $createdAt = null;
+
+    #[carbon::hasMany: 'authorId']
+    public carbon::Many<Post> $posts = .unloaded();
+
+    public function link() : carbon::Link&
+    {
+        return $this->link;
+    }
+}

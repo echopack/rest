@@ -1,0 +1,12 @@
+namespace blog;
+
+/**
+ * Comments need nothing computed: the mapping does it all.
+ */
+#[atomic]
+public class CommentTransformer : CommentResourceMapping
+{
+    public constructor()
+    {
+    }
+}

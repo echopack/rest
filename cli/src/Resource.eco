@@ -1,0 +1,49 @@
+namespace restgen;
+
+/**
+ * One #[rest::model] declaration: its entity name, its fields, and the
+ * source its mapping reads when it has #[rest::from].
+ */
+public class Resource
+{
+    public string $qualified;
+    public string $entity;
+    public string $file;
+    public int64 $line;
+    public string $visibility = 'public';
+    public string $from = '';
+    public array<Field> $fields = [];
+
+    public const function where() : string
+    {
+        return "{$this->file}:{$this->line}: {$this->qualified}";
+    }
+
+    /**
+     * The generated interface a transformer of this resource conforms to:
+     * `blog::UserResource` has `blog::UserResourceMapping`.
+     */
+    public const function mapping() : string
+    {
+        return "{$this->qualified}Mapping";
+    }
+
+    public const function space() : string
+    {
+        return Names::space($this->qualified);
+    }
+
+    /**
+     * The fields the mapping's transformer writes by hand, in field order.
+     */
+    public const function computed() : array<Field>
+    {
+        array<Field> $out = [];
+        foreach ($this->fields as const &$f) {
+            if ($f->computed && !$f->skip) {
+                $out[] = $f;
+            }
+        }
+        return $out;
+    }
+}

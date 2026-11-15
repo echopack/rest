@@ -1,0 +1,39 @@
+/**
+ * What the mapping does with carbon's relation slots, below the actions.
+ */
+
+use blog::{Post, CommentQuery, PostResourceMapping, PostResource};
+use EchoPack::Rest as rest;
+
+test a_back_reference_is_written_only_when_asked_for
+{
+    $r = Rig();
+    $r->fake->rows([postRow(1, 7, 'Hello')]);
+    $r->fake->rows([commentRow(5, 1, 7, 'nice')]);
+    carbon::Session $session = $r->db->session();
+    blog::PostRepository $posts = guard $session->repo<blog::PostRepository>();
+    array<Post> $loaded = guard $posts->find()->withComments(function(CommentQuery $c) : CommentQuery {
+        return $c->withPost();
+    })->get();
+    // the comment's post is the very post it was loaded for
+    assert($loaded[0]->comments->get()[0]->post->shares(), 'shared');
+    rest::Transformers $t = $r->app->get<rest::Transformers>();
+
+    rest::Context $comments = rest::Context($t, rest::Includes::of(['comments']));
+    string $json = rest::item($t->get<PostResourceMapping>()->transform($loaded[0], $comments))->json();
+    assert($json->contains('"comments":[{"id":5,"body":"nice"}]'), 'loaded, not asked');
+
+    rest::Context $back = rest::Context($t, rest::Includes::of(['comments.post']));
+    string $up = rest::item($t->get<PostResourceMapping>()->transform($loaded[0], $back))->json();
+    // the way back up once, and no further: comments.post.comments was not asked for
+    assert($up->contains('"comments":[{"id":5,"body":"nice","post":{"id":1,"title":"Hello"'), 'asked');
+    assert($up->ends('"created_at":"2025-10-13T14:06:00Z"}}]}}'), 'post inside stops');
+}
+
+test the_transformers_are_one_shared_registry
+{
+    $r = Rig();
+    rest::Transformers $a = $r->app->get<rest::Transformers>();
+    assert($a->sealed(), 'sealed at the composition root');
+    assert($a->has<blog::DigestResourceMapping>(), 'every mapping');
+}

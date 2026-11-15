@@ -1,0 +1,109 @@
+namespace EchoPack::Rest;
+
+/**
+ * The JSON driver. It builds a libjson tree rather than writing bytes, so
+ * the result can still be edited, and compact or pretty output is
+ * libjson's `dump` / `pretty`.
+ *
+ * libjson keeps an array's and an object's storage in a shared box, so a
+ * container pushed into its parent is the same container the stack keeps
+ * filling afterwards.
+ */
+
+public struct JsonDriver : Driver
+{
+    private json::Value $root = json::nil();
+    private array<json::Value> $stack = array<json::Value>();
+    private string $pending = '';
+    private bool $keyed = false;
+
+    public function open(const string& $name) : void
+    {
+        $this->nest(json::object());
+    }
+
+    public function list(const string& $item) : void
+    {
+        $this->nest(json::arr());
+    }
+
+    public function close() : void
+    {
+        $this->stack->pop();
+    }
+
+    public function key(const string& $name) : void
+    {
+        $this->pending = $name;
+        $this->keyed = true;
+    }
+
+    public function attribute(const string& $name) : void
+    {
+        $this->key($name);
+    }
+
+    public function nil() : void
+    {
+        $this->put(json::nil());
+    }
+
+    public function bool(bool $v) : void
+    {
+        $this->put(json::bool($v));
+    }
+
+    public function int(int64 $v) : void
+    {
+        $this->put(json::int($v));
+    }
+
+    public function float(float64 $v) : void
+    {
+        // json::dump dies on NaN and infinities, neither is a JSON number
+        if (Number::finite($v)) {
+            $this->put(json::float($v));
+        } else {
+            $this->put(json::nil());
+        }
+    }
+
+    public function str(const string& $v) : void
+    {
+        $this->put(json::str($v));
+    }
+
+    public function value(const json::Value& $v) : void
+    {
+        $this->put($v->clone());
+    }
+
+    /**
+     * The finished tree. Read it once the outermost entity is closed.
+     */
+    public const function take() : json::Value
+    {
+        return $this->root;
+    }
+
+    private function nest(json::Value $container) : void
+    {
+        $this->put($container);
+        $this->stack->push($container);
+    }
+
+    private function put(json::Value $v) : void
+    {
+        usize $depth = $this->stack->count();
+        if ($depth == 0) {
+            $this->root = $v;
+            return;
+        }
+        if ($this->keyed) {
+            $this->stack[$depth - 1][$this->pending] = $v;
+            $this->keyed = false;
+            return;
+        }
+        $this->stack[$depth - 1][] = $v;
+    }
+}

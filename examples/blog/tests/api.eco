@@ -1,0 +1,151 @@
+use blog::{ListPostsAction, GetUserAction, DigestAction, Status, Route};
+
+const string POST1 = '{"id":1,"title":"Hello","excerpt":"Echo has types and speed","status":1,"tags":["echo"],"created_at":"2025-10-13T14:06:00Z"';
+const string MARIO = '{"id":7,"display_name":"Mario D.","created_at":"2025-10-13T14:06:00+00:00"}';
+
+function same(const http::Response& $r, const string& $want) : void
+{
+    if ($r->body != $want) {
+        die("got:\n{$r->body}\nwant:\n{$want}");
+    }
+}
+
+function has(const http::Response& $r, const string& $part) : void
+{
+    if (!$r->body->contains($part)) {
+        die("missing:\n{$part}\nin:\n{$r->body}");
+    }
+}
+
+test lists_posts_without_relations
+{
+    $r = Rig();
+    $r->fake->rows([postRow(1, 7, 'Hello')]);
+    http::Response $res = $r->get<ListPostsAction>('');
+    assert($res->status == 200, 'ok');
+    string $want = '{"total_count":1,"data":[';
+    $want->append(POST1);
+    $want->append('}]}');
+    same($res, $want);
+    assert($r->queries() == 1, 'nothing loaded beyond the posts');
+}
+
+test lists_posts_with_what_the_request_includes
+{
+    $r = Rig();
+    $r->fake->rows([postRow(1, 7, 'Hello'), postRow(2, 8, 'Again')]);
+    $r->fake->rows([userRow(7, 'Mario', 'Doering'), userRow(8, 'Ray', 'Stone')]);
+    $r->fake->rows([commentRow(5, 2, 7, 'nice')]);
+    http::Response $res = $r->get<ListPostsAction>('author,comments.author');
+    // the comment's author is a post author the load already holds: no fourth query
+    assert($r->queries() == 3, 'posts, authors, comments');
+    has($res, '"author":{"id":7,"display_name":"Mario D."');
+    has($res, '"comments":[]');
+    has($res, '"comments":[{"id":5,"body":"nice","author":{"id":7,"display_name":"Mario D."');
+    assert(!$res->body->contains('"post":'), 'a comment\'s post was not loaded');
+    assert(!$res->body->contains('"stats"'), 'stats not asked for');
+}
+
+test refuses_an_include_the_action_does_not_allow
+{
+    $r = Rig();
+    http::Response $res = $r->get<ListPostsAction>('author,secrets');
+    assert($res->status == 400, 'bad request');
+    same($res, '{"error":{"code":"include","message":"\'secrets\' cannot be included here"}}');
+    assert($r->queries() == 0, 'nothing ran');
+}
+
+test computes_stats_only_on_request
+{
+    $r = Rig();
+    $r->fake->rows([postRow(1, 7, 'Hello')]);
+    has($r->get<ListPostsAction>('stats'), '"stats":{"words":5,"comments":null}');
+    $r->fake->rows([postRow(1, 7, 'Hello')]);
+    $r->fake->rows([commentRow(5, 1, 7, 'nice'), commentRow(6, 1, 8, 'yes')]);
+    $r->fake->rows([userRow(7, 'Mario', 'Doering'), userRow(8, 'Ray', 'Stone')]);
+    http::Response $both = $r->get<ListPostsAction>('stats,comments.author');
+    has($both, '"stats":{"words":5,"comments":2}');
+    has($both, '{"id":6,"body":"yes","author":{"id":8,"display_name":"Ray S."');
+}
+
+test hides_a_draft_from_everyone_but_its_author
+{
+    $r = Rig();
+    $r->fake->rows([postRow(1, 7, 'Secret', .draft)]);
+    has($r->get<ListPostsAction>(''), '"title":"","excerpt":""');
+    $r->fake->rows([postRow(1, 7, 'Secret', .draft)]);
+    has($r->get<ListPostsAction>('', $viewer: 7), '"title":"[draft] Secret","excerpt":"Echo has types and speed"');
+}
+
+test shows_a_user_by_who_asks
+{
+    $r = Rig();
+    $r->fake->rows([userRow(7, 'Mario', 'Doering')]);
+    http::Response $anonymous = $r->get<GetUserAction>('', $id: '7');
+    string $want = '{"data":';
+    $want->append(MARIO);
+    $want->append('}');
+    same($anonymous, $want);
+
+    $r->fake->rows([userRow(7, 'Mario', 'Doering')]);
+    $r->fake->rows([postRow(1, 7, 'Hello')]);
+    http::Response $self = $r->get<GetUserAction>('posts', $viewer: 7, $id: '7');
+    has($self, '"display_name":"Mario Doering","email":"Mario@example.com"');
+    has($self, '"posts":[{"id":1,"title":"Hello"');
+}
+
+test answers_404_for_a_missing_user
+{
+    $r = Rig();
+    $r->fake->rows([]);
+    http::Response $res = $r->get<GetUserAction>('', $id: '9');
+    assert($res->status == 404, 'not found');
+}
+
+test builds_a_digest_from_a_plain_struct
+{
+    $r = Rig();
+    $r->fake->rows([[hydrahon::Value::from(2)]]);
+    same($r->get<DigestAction>(''), '{"data":{"headline":"This week on the blog","published":2}}');
+
+    $r->fake->rows([[hydrahon::Value::from(2)]]);
+    $r->fake->rows([postRow(2, 8, 'Again'), postRow(1, 7, 'Hello')]);
+    $r->fake->rows([userRow(7, 'Mario', 'Doering'), userRow(8, 'Ray', 'Stone')]);
+    http::Response $res = $r->get<DigestAction>('latest.author,editor');
+    has($res, '"latest":[{"id":2,"title":"Again"');
+    has($res, '"author":{"id":8,"display_name":"Ray S."');
+    has($res, '"editor":{"id":8,"display_name":"Ray S."');
+}
+
+test the_editor_only_loads_what_it_needs
+{
+    $r = Rig();
+    $r->fake->rows([[hydrahon::Value::from(0)]]);
+    $r->fake->rows([]);
+    http::Response $res = $r->get<DigestAction>('editor');
+    has($res, '"editor":null');
+    assert(!$res->body->contains('"latest"'), 'latest not asked for');
+}
+
+test answers_xml_when_asked
+{
+    $r = Rig();
+    $r->fake->rows([postRow(1, 7, 'Hello')]);
+    http::Query $query = http::Query();
+    http::Headers $headers = http::Headers();
+    $headers->add('Accept', 'application/xml');
+    http::Request $req = http::Request(.get, '/', '/', '', $query, 'HTTP/1.1', $headers, '', '127.0.0.1');
+    http::Response $res = $r->app->get<ListPostsAction>()->handle($req);
+    has($res, '<response><total_count>1</total_count><data><post id="1"><title>Hello</title>');
+    has($res, '<tags><tag>echo</tag></tags>');
+}
+
+test routes_every_action
+{
+    $r = Rig();
+    array<string> $paths = [];
+    foreach ($r->app->with<Route>() as &$row) {
+        $paths[] = $row->meta<Route>()->path;
+    }
+    assert(str::join($paths, ' ') == '/posts /users/{id:number} /digest', 'three routes');
+}

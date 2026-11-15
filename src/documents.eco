@@ -1,0 +1,23 @@
+/**
+ * The two ways to start a `Document`, as `rest::item($r)` and
+ * `rest::collection($rs)`: a static on the generic struct would make the
+ * caller spell the resource type.
+ */
+
+namespace EchoPack::Rest;
+
+/**
+ * One resource under `data`.
+ */
+public function item<M>(M $resource) : Document<M>
+{
+    return Document<M>(mv $resource);
+}
+
+/**
+ * A list of resources under `data`, `[]` when empty.
+ */
+public function collection<M>(array<M> $resources) : Document<array<M>>
+{
+    return Document<array<M>>(mv $resources);
+}

@@ -1,0 +1,24 @@
+namespace blog;
+
+#[carbon::model: 'comments']
+public class Comment : carbon::Model<Comment, CommentRepository>
+{
+    public carbon::Link $link = .detached();
+
+    #[carbon::key]
+    public int64 $id = 0;
+    public int64 $postId;
+    public int64 $authorId;
+    public string $body;
+
+    #[carbon::belongsTo: 'postId']
+    public carbon::One<Post> $post = .unloaded();
+
+    #[carbon::belongsTo: 'authorId']
+    public carbon::One<User> $author = .unloaded();
+
+    public function link() : carbon::Link&
+    {
+        return $this->link;
+    }
+}

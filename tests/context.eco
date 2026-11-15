@@ -1,0 +1,84 @@
+use EchoPack::Rest as rest;
+
+internal function registry() : rest::Transformers
+{
+    rest::Transformers $t = rest::Transformers();
+    $t->add<pets::PetResourceMapping>(pets::PetTransformer());
+    $t->add<pets::OwnerResourceMapping>(pets::OwnerTransformer());
+    $t->seal();
+    return $t;
+}
+
+#[group: "unit"]
+test context_tracks_where_it_is {
+    rest::Context $ctx = rest::Context(registry(), rest::Includes::of(['stats', 'author.stats']));
+    assert($ctx->at() == '', 'top');
+    assert($ctx->wants('stats'), 'top stats');
+    assert(!$ctx->wants('author.x'), 'not asked');
+    assert($ctx->enter('author'), 'entered');
+    assert($ctx->at() == 'author', 'inside');
+    assert($ctx->depth() == 1, 'depth');
+    assert($ctx->wants('stats'), 'relative');
+    assert($ctx->enter('team'), 'entered');
+    assert(!$ctx->wants('stats'), 'not below team');
+    $ctx->leave();
+    $ctx->leave();
+    assert($ctx->depth() == 0, 'back out');
+}
+
+#[group: "unit"]
+test context_keeps_typed_values {
+    rest::Context $ctx = rest::Context(registry());
+    assert($ctx->find<pets::Loud>() == null, 'none yet');
+    assert(!$ctx->has<pets::Loud>(), 'has not');
+    $ctx->put(pets::Loud());
+    assert($ctx->has<pets::Loud>(), 'has');
+    pets::Loud $loud = $ctx->get<pets::Loud>();
+}
+
+#[group: "unit"]
+#[tests: expects death]
+test context_get_of_a_missing_value_dies {
+    rest::Context $ctx = rest::Context(registry());
+    pets::Loud $loud = $ctx->get<pets::Loud>();
+}
+
+#[group: "unit"]
+test transformers_by_type {
+    rest::Transformers $t = registry();
+    assert($t->has<pets::PetResourceMapping>(), 'pets');
+    assert($t->sealed(), 'sealed');
+    rest::Transformers $empty = rest::Transformers();
+    assert($empty->find<pets::PetResourceMapping>() == null, 'missing is null');
+}
+
+#[group: "unit"]
+#[tests: expects death]
+test transformers_refuse_a_second_of_a_type {
+    rest::Transformers $t = rest::Transformers();
+    $t->add<pets::PetResourceMapping>(pets::PetTransformer());
+    $t->add<pets::PetResourceMapping>(pets::PetTransformer());
+}
+
+#[group: "unit"]
+#[tests: expects death]
+test transformers_refuse_adding_after_seal {
+    rest::Transformers $t = rest::Transformers();
+    $t->seal();
+    $t->add<pets::PetResourceMapping>(pets::PetTransformer());
+}
+
+#[group: "unit"]
+#[tests: expects death]
+test transformers_get_of_a_missing_one_dies {
+    rest::Transformers $t = rest::Transformers();
+    pets::PetResourceMapping $p = $t->get<pets::PetResourceMapping>();
+}
+
+#[group: "unit"]
+test context_refuses_nesting_past_its_limit {
+    rest::Context $ctx = rest::Context(registry(), $limit: 1);
+    assert($ctx->enter('a'), 'one level');
+    assert(!$ctx->enter('b'), 'not two');
+    assert($ctx->at() == 'a', 'unchanged');
+}

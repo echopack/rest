@@ -1,0 +1,11 @@
+namespace EchoPack::Rest;
+
+/**
+ * The calendar formats the encoders write, made once.
+ */
+internal struct Patterns
+{
+    internal static calendar::Format $atom = calendar::Format("uuuu-MM-dd'T'HH:mm:ssxxx");
+    internal static calendar::Format $wall = calendar::Format("uuuu-MM-dd'T'HH:mm:ss");
+    internal static calendar::Format $date = calendar::Format('uuuu-MM-dd');
+}

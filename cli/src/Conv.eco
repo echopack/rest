@@ -1,0 +1,28 @@
+namespace restgen;
+
+/**
+ * How a source value becomes the resource field's value.
+ */
+public enum Conv
+{
+    /**
+     * The same type on both sides.
+     */
+    case copy;
+
+    /**
+     * A source that another resource is built from, through that
+     * resource's mapping.
+     */
+    case transform;
+
+    /**
+     * The same, for a value that may be null.
+     */
+    case maybe;
+
+    /**
+     * The same, for a list.
+     */
+    case many;
+}

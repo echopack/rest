@@ -1,0 +1,10 @@
+namespace blog;
+
+/**
+ * One endpoint. Actions are container services; their dependencies come
+ * through the constructor, their request through `handle`.
+ */
+public interface Action
+{
+    function handle(http::Request $req) : http::Response;
+}

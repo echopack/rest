@@ -1,0 +1,56 @@
+namespace EchoPack::Rest;
+
+/**
+ * An error response in the same formats as a `Document`:
+ * `{"error":{"code":"include","message":"..."}}`. Status and code are
+ * the caller's; `of` makes the 400 a refused include list deserves.
+ */
+public struct Problem
+{
+    public int32 $status;
+    public string $code;
+    public string $message;
+
+    /**
+     * The 400 for an include list the endpoint refused.
+     */
+    public static function of(const Error& $e) : Problem
+    {
+        return Problem($status: 400, $code: 'include', $message: $e->message());
+    }
+
+    /**
+     * Walk the error document into any driver.
+     */
+    public const function render<D : Driver>(D& $d) : void
+    {
+        $d->open('response');
+        $d->key('error');
+        $d->open('error');
+        $d->key('code');
+        $d->str($this->code);
+        $d->key('message');
+        $d->str($this->message);
+        $d->close();
+        $d->close();
+    }
+
+    public const function json() : string
+    {
+        return Format::json->body($this, false);
+    }
+
+    public const function xml() : string
+    {
+        return Format::xml->body($this, false);
+    }
+
+    /**
+     * An http response in the given format, with its status and content
+     * type set.
+     */
+    public const function response(Format $format = Format::json) : http::Response
+    {
+        return $format->response($this, $this->status, false);
+    }
+}

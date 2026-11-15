@@ -1,0 +1,6 @@
+namespace blog;
+
+public struct CommentRepository : carbon::Repository<Comment, CommentQuery, int64>, CommentWiring
+{
+    public carbon::Session $session;
+}

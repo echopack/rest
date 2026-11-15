@@ -1,0 +1,16 @@
+namespace blog;
+
+/**
+ * Numbers about a post. Nothing builds it from a source: the post's
+ * transformer computes it.
+ */
+#[rest::model: 'stats']
+public struct StatsResource
+{
+    public int64 $words;
+
+    /**
+     * Null when the comments were not loaded, so they were not counted.
+     */
+    public int64? $comments;
+}

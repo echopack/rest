@@ -1,0 +1,41 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+
+/**
+ * Who is asking. The example reads it from an `X-User` header; an app
+ * reads it from its session.
+ */
+public class Viewer
+{
+    public const int64 $id;
+
+    public constructor(int64 $id)
+    {
+        $this->id = $id;
+    }
+
+    /**
+     * The viewer a request names, null for an anonymous one.
+     */
+    public static function of(const http::Request& $req) : Viewer?
+    {
+        string $raw = $req->header('X-User') ?? '';
+        int64 $id = guard str::int($raw) else {
+            return null;
+        };
+        return Viewer($id);
+    }
+
+    /**
+     * Keep the viewer a request names on `$ctx`, nothing for an anonymous
+     * one.
+     */
+    public static function attach(const http::Request& $req, rest::Context& $ctx) : void
+    {
+        Viewer $viewer = guard Viewer::of($req) else {
+            return;
+        };
+        $ctx->put($viewer);
+    }
+}

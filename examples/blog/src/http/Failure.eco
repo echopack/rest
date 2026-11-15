@@ -1,0 +1,19 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+
+/**
+ * The error responses the actions share.
+ */
+public struct Failure
+{
+    public static function storage(const carbon::Error& $e) : http::Response
+    {
+        return rest::Problem($status: 500, $code: 'storage', $message: "{$e}")->response();
+    }
+
+    public static function missing(const string& $what) : http::Response
+    {
+        return rest::Problem($status: 404, $code: 'missing', $message: "no such {$what}")->response();
+    }
+}

@@ -1,0 +1,56 @@
+namespace restgen;
+
+internal function rendered() : string
+{
+    return Emitter(program())->render();
+}
+
+internal function expect(const string& $out, const string& $part) : void
+{
+    if (!$out->contains($part)) {
+        die("missing:\n{$part}\n\nin:\n{$out}");
+    }
+}
+
+#[group: "unit"]
+test emits_a_mapping_interface {
+    string $out = rendered();
+    expect($out, "namespace app;\n\n/**\n * How a app::Comment becomes a app::CommentResource.");
+    expect($out, "public interface UserResourceMapping\n\{\n    /**\n     * The `display_name` field.\n     */\n    function displayName(const app::User& $source, EchoPack::Rest::Context& $ctx) : string;");
+    expect($out, "    /**\n     * The `stats` field, written when `statistics` is asked for.\n     */\n    function stats(const app::Post& $source, EchoPack::Rest::Context& $ctx) : int64;");
+    expect($out, "    function many(const array<app::User>& $sources, EchoPack::Rest::Context& $ctx) : array<app::UserResource>");
+    expect($out, "    function maybe(app::User? $source, EchoPack::Rest::Context& $ctx) : app::UserResource?");
+    expect($out, "    function refine(app::UserResource& $resource, const app::User& $source, EchoPack::Rest::Context& $ctx) : void");
+}
+
+#[group: "unit"]
+test emits_transform_bodies {
+    string $out = rendered();
+    expect($out, "        EchoPack::Rest::Include<array<app::PostResource>> $vPosts = .absent();\n        if ($source->posts->loaded() && $ctx->wants('posts') && $ctx->enter('posts')) \{\n            $vPosts = .of($ctx->transformers->get<app::PostResourceMapping>()->many($source->posts->get(), $ctx));\n            $ctx->leave();\n        }\n        app::UserResource $resource = app::UserResource(\n            $id: $source->id,\n            $name: $source->name,\n            $displayName: $this->displayName($source, $ctx),\n            $posts: $vPosts\n        );");
+    expect($out, "        if ($source->author->loaded() && $ctx->wants('author') && $ctx->enter('author')) \{\n            $vAuthor = .of($ctx->transformers->get<app::UserResourceMapping>()->maybe($source->author->get(), $ctx));");
+    expect($out, "        EchoPack::Rest::Include<int64> $vStats = .absent();\n        if ($ctx->wants('statistics')) \{\n            $vStats = .of($this->stats($source, $ctx));\n        }");
+    expect($out, "            $headline: $source->title,");
+    expect($out, "            array<app::Forecast>? $v1 = $source->forecasts->get();\n            if ($v1 == null) \{\n                $vForecasts = .none();\n            } else {\n                array<app::Forecast> $v2 = guard $v1;\n                $vForecasts = .of($ctx->transformers->get<app::ForecastResourceMapping>()->many($v2, $ctx));\n            }");
+    expect($out, "        if (!$ctx->enter('today')) \{\n            die('rest: app::WeatherResource.today nests deeper than the context allows; make it a rest::Include');\n        }\n        app::ForecastResource? $vToday = $ctx->transformers->get<app::ForecastResourceMapping>()->maybe($source->today, $ctx);\n        $ctx->leave();");
+}
+
+#[group: "unit"]
+test emits_encoders {
+    string $out = rendered();
+    expect($out, "public function encode<D : Driver>(const app::PostResource& $m, D& $d) : void\n\{\n    $d->open('post');\n    $d->key('id');\n    $d->int($m->id);\n    $d->key('headline');\n    $d->str($m->headline);\n    $d->key('created_at');\n    $d->str(Stamp::zulu->render($m->createdAt));\n    if ($m->author->present()) \{\n        $d->key('author');\n        encode($m->author, $d);\n    }");
+    expect($out, "        $d->key('comments');\n        array<app::CommentResource>? $v1 = $m->comments->get();\n        if ($v1 == null) \{\n            $d->nil();\n        } else {\n            array<app::CommentResource> $v2 = guard $v1;\n            $d->list('comment');");
+    expect($out, "        $d->key('stats');\n        int64? $v4 = $m->stats->get();\n        if ($v4 == null) \{\n            $d->nil();\n        } else {\n            int64 $v5 = guard $v4;\n            $d->int($v5);");
+    expect($out, "    $d->open('user');\n    $d->attribute('id');");
+    expect($out, "    $d->key('day');\n    encode($m->day, $d);");
+}
+
+#[group: "unit"]
+test leaves_out_the_mapping_without_a_source {
+    array<json::Value> $none = [];
+    array<json::Value> $d = [type('struct', 'app::Stats', [tool('model')], [bare('n', prim('int64'))])];
+    array<string> $only = [];
+    string $out = Emitter(Program::read(decls($d), $only))->render();
+    assert(!$out->contains('interface'), 'no mapping');
+    assert(!$out->contains('namespace app;'), 'no namespace section');
+    expect($out, "public function encode<D : Driver>(const app::Stats& $m, D& $d) : void");
+}

@@ -1,0 +1,50 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+
+/**
+ * `GET /users/{id}`: one user, with `?include=posts` their posts. What the
+ * user resource shows of the email and the name depends on who asks.
+ */
+#[atomic]
+public class GetUserAction : Action
+{
+    public carbon::DB $db;
+    public rest::Transformers $transformers;
+    private rest::Allow $allow;
+
+    public constructor(carbon::DB $db, rest::Transformers $transformers)
+    {
+        $this->db = $db;
+        $this->transformers = $transformers;
+        $this->allow = rest::Allow::of(['posts']);
+    }
+
+    public function handle(http::Request $req) : http::Response
+    {
+        rest::Includes $inc = guard $this->allow->parse($req) else ($e) {
+            return rest::Problem::of($e)->response();
+        };
+        int64 $id = guard str::int($req->param('id') ?? '') else {
+            return Failure::missing('user');
+        };
+
+        carbon::Session $session = $this->db->scoped();
+        UserRepository $users = guard $session->repo<UserRepository>();
+        UserQuery $query = $users->find();
+        if ($inc->has('posts')) {
+            $query = $query->withPosts();
+        }
+        User? $found = guard $query->get($id) else ($e) {
+            return Failure::storage($e);
+        };
+        User $user = guard $found else {
+            return Failure::missing('user');
+        };
+
+        rest::Context $ctx = rest::Context($this->transformers, $inc);
+        Viewer::attach($req, $ctx);
+        $doc = rest::item($this->transformers->get<UserResourceMapping>()->transform($user, $ctx));
+        return $doc->response(rest::Format::negotiate($req));
+    }
+}

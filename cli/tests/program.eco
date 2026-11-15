@@ -1,0 +1,128 @@
+namespace restgen;
+
+internal function program() : Program
+{
+    array<string> $only = [];
+    return Program::read(decls(blog()), $only);
+}
+
+internal function fieldOf(const Program& $p, const string& $resource, const string& $name) : Field
+{
+    Resource $r = guard $p->resource($resource);
+    foreach ($r->fields as const &$f) {
+        if ($f->name == $name) {
+            return $f;
+        }
+    }
+    die("no field {$name}");
+}
+
+#[group: "unit"]
+test reads_the_blog_cleanly {
+    Program $p = program();
+    if ($p->problems->count() > 0) {
+        die(str::join($p->problems, "\n"));
+    }
+    assert($p->resources->count() == 5, 'five resources');
+}
+
+#[group: "unit"]
+test decides_how_each_field_is_filled {
+    Program $p = program();
+    Field $name = fieldOf($p, 'app::UserResource', 'name');
+    assert($name->access == Access::plain && $name->conv == Conv::copy, 'copied');
+    Field $display = fieldOf($p, 'app::UserResource', 'displayName');
+    assert($display->computed && $display->include->empty(), 'computed every time');
+    Field $posts = fieldOf($p, 'app::UserResource', 'posts');
+    assert($posts->access == Access::many && $posts->conv == Conv::many, 'has many');
+    assert($posts->mapping == 'app::PostResourceMapping', 'through the post mapping');
+    Field $headline = fieldOf($p, 'app::PostResource', 'headline');
+    assert($headline->from == 'title', 'renamed source');
+    Field $author = fieldOf($p, 'app::PostResource', 'author');
+    assert($author->access == Access::one && $author->conv == Conv::maybe, 'belongs to');
+    Field $stats = fieldOf($p, 'app::PostResource', 'stats');
+    assert($stats->include == 'statistics', 'named include');
+    Field $forecasts = fieldOf($p, 'app::WeatherResource', 'forecasts');
+    assert($forecasts->access == Access::resolved && $forecasts->conv == Conv::many, 'resolved list');
+    assert($forecasts->sourceSpell == 'array<app::Forecast>', 'source list spelled');
+    Field $today = fieldOf($p, 'app::WeatherResource', 'today');
+    assert($today->access == Access::plain && $today->conv == Conv::maybe, 'nullable nested');
+}
+
+#[group: "unit"]
+test refuses_a_field_the_source_lacks {
+    array<json::Value> $none = [];
+    array<json::Value> $d = [
+        type('struct', 'app::Item', $none, [bare('id', prim('int64'))]),
+        type('struct', 'app::ItemResource', [tool('model'), tool('from', 'app::Item')], [bare('id', prim('int64')), bare('label', text())]),
+    ];
+    array<string> $found = problems($d);
+    assert($found->count() == 1, 'one');
+    expect($found[0], "app::Item has no field 'label'; mark the field #[rest::computed]");
+}
+
+#[group: "unit"]
+test refuses_a_relation_outside_an_include {
+    array<json::Value> $none = [];
+    array<json::Value> $d = [
+        type('class', 'app::User', $none, [bare('id', prim('int64'))]),
+        type('class', 'app::Post', $none, [bare('author', generic('carbon::One', named('app::User')))]),
+        type('struct', 'app::UserResource', [tool('model'), tool('from', 'app::User')], [bare('id', prim('int64'))]),
+        type('struct', 'app::PostResource', [tool('model'), tool('from', 'app::Post')], [bare('author', optionalOf(named('app::UserResource')))]),
+    ];
+    array<string> $found = problems($d);
+    assert($found->count() == 1, 'one');
+    expect($found[0], 'is there only once loaded, so the field has to be a rest::Include');
+}
+
+#[group: "unit"]
+test refuses_a_mismatch_and_a_foreign_resource {
+    array<json::Value> $none = [];
+    array<json::Value> $d = [
+        type('struct', 'app::A', $none, [bare('n', prim('int64')), bare('b', named('app::C'))]),
+        type('struct', 'app::B', $none, [bare('id', prim('int64'))]),
+        type('struct', 'app::C', $none, [bare('id', prim('int64'))]),
+        type('struct', 'app::BResource', [tool('model'), tool('from', 'app::B')], [bare('id', prim('int64'))]),
+        type('struct', 'app::AResource', [tool('model'), tool('from', 'app::A')], [bare('n', text()), bare('b', named('app::BResource'))]),
+    ];
+    array<string> $found = problems($d);
+    assert($found->count() == 2, 'two');
+    expect($found[0], "'int64' does not fit 'string'");
+    expect($found[1], 'app::BResource is built from app::B, not from');
+}
+
+#[group: "unit"]
+test refuses_misused_computed_fields {
+    array<json::Value> $none = [];
+    array<json::Value> $d = [
+        type('struct', 'app::A', $none, [bare('id', prim('int64'))]),
+        type('struct', 'app::AResource', [tool('model'), tool('from', 'app::A')], [
+            field('label', text(), [tool('computed', 'label')]),
+            field('many', text(), [tool('computed')]),
+            field('id', prim('int64'), [tool('computed'), tool('source', 'id')]),
+        ]),
+        type('struct', 'app::Loose', [tool('model')], [field('x', text(), [tool('computed')])]),
+    ];
+    array<string> $found = problems($d);
+    assert($found->count() == 4, 'four');
+    string $all = str::join($found, "\n");
+    assert($all->contains('is written only on request, so the field has to be a rest::Include'), 'named on a plain field');
+    assert($all->contains("'many' is a method of every mapping"), 'reserved');
+    assert($all->contains('computed or read from #[rest::source], not both'), 'both');
+    assert($all->contains('a resource without #[rest::from] has none'), 'no mapping');
+}
+
+#[group: "unit"]
+test refuses_a_bad_time_style {
+    array<json::Value> $none = [];
+    array<json::Value> $d = [
+        type('struct', 'app::T', [tool('model')], [
+            field('at', named('std::time::timestamp'), [tool('time', 'unix')]),
+            field('day', named('calendar::Date'), [tool('time', 'zulu')]),
+        ]),
+    ];
+    array<string> $found = problems($d);
+    assert($found->count() == 2, 'two');
+    expect($found[0], 'none of atom, zulu or date');
+    expect($found[1], 'is not one');
+}

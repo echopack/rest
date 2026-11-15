@@ -1,0 +1,14 @@
+namespace blog;
+
+public struct PostRepository : carbon::Repository<Post, PostQuery, int64>, PostWiring
+{
+    public carbon::Session $session;
+
+    /**
+     * Published posts, newest first.
+     */
+    public function published() : PostQuery
+    {
+        return $this->find()->where(PostTable::$status->is(Status::published))->newest();
+    }
+}

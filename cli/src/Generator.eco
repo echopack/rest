@@ -1,0 +1,267 @@
+namespace restgen;
+
+use std::io;
+
+/**
+ * The pipeline `restgen` runs in a module directory: the decls pass, the
+ * checks, the file.
+ *
+ * The decls pass defines REST_NOGEN, which the module's manifest uses to
+ * leave `.rest/` out, so a stale generated file can never stop the next one
+ * from being written. Code that uses the generated mappings fails to
+ * compile in that pass; echoc still prints every declaration, so its
+ * complaints are kept back unless the pass printed nothing usable.
+ */
+public class Generator
+{
+    public string $echoc = 'echoc';
+
+    /**
+     * A file holding `echoc -p decls --decls-all` output to read instead of
+     * running decls passes of its own: how a build tool that already made
+     * one pass for several generators hands it over. Empty runs the pass.
+     */
+    public string $from = '';
+    public string $target = '.rest/models.eco';
+    public bool $quiet = false;
+
+    /**
+     * Read the module and render the generated file, or say why not.
+     */
+    public function render() : result<string, Failure>
+    {
+        string $manifest = Sys::read('module.eco');
+        if ($manifest->empty()) {
+            return .error(.input('no module.eco here; run restgen in the module that declares the resources'));
+        }
+        if (!Generator::wired($manifest)) {
+            return .error(.input(Generator::wiring()));
+        }
+
+        Program $program = Program();
+        if (!$this->from->empty()) {
+            // every module is in the file: resources from this one, sources from all
+            string $name = guard Generator::named($manifest) else {
+                return .error(.input('module.eco names no module (#[module: "..."])'));
+            };
+            json::Value $all = guard $this->read() else ($e) {
+                return .error($e);
+            };
+            $program = Program::read($all, [$name]);
+        } else {
+            json::Value $decls = guard $this->decls(false) else ($e) {
+                return .error($e);
+            };
+            $program = Program::read($decls, []);
+            if ($program->missing) {
+                // a #[rest::from] source in a dependency: read everything, keep resources local
+                array<string> $local = [];
+                foreach (Json::items($decls, 'modules') as const &$m) {
+                    $local[] = Json::text($m, 'name');
+                }
+                json::Value $everything = guard $this->decls(true) else ($e) {
+                    return .error($e);
+                };
+                $program = Program::read($everything, $local);
+            }
+        }
+
+        if ($program->problems->count() > 0) {
+            foreach ($program->problems as const &$p) {
+                io::eprintln("error: {$p}");
+            }
+            return .error(.problems($program->problems->count() as int32));
+        }
+        $this->say("restgen  {$program->resources->count()} resource(s)");
+        return .ok(Emitter($program)->render());
+    }
+
+    /**
+     * Write the generated file. Unchanged content is left alone, so echoc's
+     * cache stays warm.
+     */
+    public function generate() : status<Failure>
+    {
+        string $text = guard $this->render() else ($e) {
+            return .error($e);
+        };
+        result<bool, io::ioerror> $made = std::fs::mkdir('.rest');
+        if ($made->failed() && !$made->failure()->exists()) {
+            return .error(.input('could not create .rest/'));
+        }
+        if (!Sys::put($this->target, $text)) {
+            return .error(.input("could not write {$this->target}"));
+        }
+        $this->say("wrote    {$this->target}");
+        return .ok;
+    }
+
+    /**
+     * Whether the generated file is what generating would write now.
+     */
+    public function check() : status<Failure>
+    {
+        string $text = guard $this->render() else ($e) {
+            return .error($e);
+        };
+        if (Sys::read($this->target) != $text) {
+            return .error(.stale);
+        }
+        $this->say("current  {$this->target}");
+        return .ok;
+    }
+
+    private function decls(bool $everything) : result<json::Value, Failure>
+    {
+        // a hook calling back into echoc would run itself again without --no-hooks
+        array<string> $args = ['build', '-p', 'decls', '--no-hooks', '--define', 'REST_NOGEN', '-o', 'ecobuild/restgen-decls'];
+        if ($everything) {
+            $args[] = '--decls-all';
+        }
+        std::process::output $run = guard std::process::command($this->echoc, $args)->output() else ($e) {
+            return .error(.input("could not run {$this->echoc}: {$e->message()}; pass --echoc <path> or set $ECHOC"));
+        }
+        json::Value $decls = guard json::parse($run->stdout) else {
+            return .error(.tool("{$run->status}", $run->stderr));
+        }
+        if (Json::items($decls, 'modules')->count() == 0) {
+            return .error(.tool("{$run->status}", $run->stderr));
+        }
+        string? $moved = Generator::unread($decls);
+        if ($moved != null) {
+            string $key = guard $moved;
+            return .error(.input("{$this->echoc} -p decls no longer gives declarations a '{$key}'; this restgen reads the format of echoc 0.12, so update one or the other"));
+        }
+        return .ok($decls);
+    }
+
+    /**
+     * The declarations in the file `--decls` names.
+     */
+    private function read() : result<json::Value, Failure>
+    {
+        string $text = Sys::read($this->from);
+        if ($text->empty()) {
+            return .error(.input("could not read {$this->from}"));
+        }
+        json::Value $decls = guard json::parse($text) else {
+            return .error(.input("{$this->from} is not the JSON echoc -p decls prints"));
+        };
+        string? $moved = Generator::unread($decls);
+        if ($moved != null) {
+            string $key = guard $moved;
+            return .error(.input("{$this->from}: echoc -p decls no longer gives declarations a '{$key}'; this restgen reads the format of echoc 0.12, so update one or the other"));
+        }
+        return .ok($decls);
+    }
+
+    /**
+     * The name `#[module: "..."]` gives in `$manifest`, null when it gives
+     * none.
+     */
+    public static function named(const string& $manifest) : string?
+    {
+        foreach (str::split($manifest, "\n") as const &$raw) {
+            string $line = string::from(str::trim($raw));
+            if (!$line->starts('#[module:')) {
+                continue;
+            }
+            // either quote: the manifest is Echo
+            string $quote = '"';
+            usize $open = $line->find($quote);
+            usize $single = $line->find("'");
+            if ($single < $open) {
+                $open = $single;
+                $quote = "'";
+            }
+            if ($open == $line->size()) {
+                return null;
+            }
+            string $rest = $line->sub($open + 1, $line->size() - $open - 1);
+            usize $close = $rest->find($quote);
+            if ($close == $rest->size()) {
+                return null;
+            }
+            string? $name = $rest->sub(0, $close);
+            return $name;
+        }
+        return null;
+    }
+
+    /**
+     * The first key restgen reads off a declaration that the decls output
+     * does not have, null when it has every one. echoc does not version the
+     * format; this is how a change to it shows up as a message instead of
+     * resources that quietly lose their fields.
+     */
+    public static function unread(const json::Value& $decls) : string?
+    {
+        array<string> $keys = ['kind', 'qualified', 'file', 'line', 'tools', 'fields'];
+        foreach (Json::items($decls, 'modules') as const &$m) {
+            array<json::Value> $found = Json::items($m, 'declarations');
+            if ($found->count() == 0) {
+                continue;
+            }
+            // one declaration tells: echoc writes every one in the same shape
+            json::Value $d = $found[0];
+            foreach ($keys as const &$k) {
+                json::Value? $has = $d->get($k);
+                if ($has == null) {
+                    return $k;
+                }
+            }
+            return null;
+        }
+        return null;
+    }
+
+    /**
+     * Whether `$manifest` leaves `.rest/` out behind REST_NOGEN: a
+     * `#[sources: ".rest/…"]` line inside an `#[if: !REST_NOGEN]` block,
+     * nested in other `#[if]` blocks or not. Comments do not count.
+     */
+    public static function wired(const string& $manifest) : bool
+    {
+        array<bool> $open = [];
+        foreach (str::split($manifest, "\n") as const &$raw) {
+            string $line = string::from(str::trim($raw));
+            if ($line->starts('//') || $line->starts('*') || $line->starts('/*')) {
+                continue;
+            }
+            if ($line->starts('#[if:')) {
+                $open[] = $line->contains('!REST_NOGEN');
+                continue;
+            }
+            if ($line->starts('#[end]')) {
+                if (!$open->empty()) {
+                    $open->pop();
+                }
+                continue;
+            }
+            if ($line->starts('#[sources:') && $line->contains('.rest/')) {
+                foreach ($open as const &$guarded) {
+                    if ($guarded) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private function say(const string& $text) : void
+    {
+        if (!$this->quiet) {
+            io::println($text);
+        }
+    }
+
+    private static function wiring() : string
+    {
+        string $out = "module.eco does not include .rest/ behind REST_NOGEN. add:\n\n";
+        $out->append("#[if: !REST_NOGEN]\n");
+        $out->append("#[sources: \".rest/*.eco\"]\n");
+        $out->append('#[end]');
+        return $out;
+    }
+}

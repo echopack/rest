@@ -1,0 +1,74 @@
+namespace blog;
+
+use EchoPack::Rest as rest;
+use container::{Builder, Container};
+
+/**
+ * The composition root, the part the framework will own: configuration,
+ * transformers, the transformer registry and the actions with their
+ * routes, all in one container.
+ */
+public struct App
+{
+    public static function container(carbon::DB $db) : Container
+    {
+        Builder $b = Builder();
+        $b->bind<carbon::DB>(put: $db);
+        $b->param(Excerpt(40));
+
+        $b->bind<UserTransformer>(once: function() : UserTransformer {
+            return UserTransformer();
+        });
+        $b->bind<PostTransformer>(once: function(Container $c) : PostTransformer {
+            return PostTransformer($c->get<Excerpt>());
+        });
+        $b->bind<CommentTransformer>(once: function() : CommentTransformer {
+            return CommentTransformer();
+        });
+        $b->bind<DigestTransformer>(once: function() : DigestTransformer {
+            return DigestTransformer();
+        });
+        // every transformer by the mapping it serves, for the nested resources
+        $b->bind<rest::Transformers>(once: function(Container $c) : rest::Transformers {
+            rest::Transformers $t = rest::Transformers();
+            $t->add<UserResourceMapping>($c->get<UserTransformer>());
+            $t->add<PostResourceMapping>($c->get<PostTransformer>());
+            $t->add<CommentResourceMapping>($c->get<CommentTransformer>());
+            $t->add<DigestResourceMapping>($c->get<DigestTransformer>());
+            $t->seal();
+            return $t;
+        });
+
+        $b->bind<ListPostsAction>(once: function(Container $c) : ListPostsAction {
+            return ListPostsAction($c->get<carbon::DB>(), $c->get<rest::Transformers>());
+        })
+            ->meta<Route>(Route(.get, '/posts'))
+            ->view<Action>();
+        $b->bind<GetUserAction>(once: function(Container $c) : GetUserAction {
+            return GetUserAction($c->get<carbon::DB>(), $c->get<rest::Transformers>());
+        })
+            ->meta<Route>(Route(.get, '/users/{id:number}'))
+            ->view<Action>();
+        $b->bind<DigestAction>(once: function(Container $c) : DigestAction {
+            return DigestAction($c->get<carbon::DB>(), $c->get<rest::Transformers>());
+        })
+            ->meta<Route>(Route(.get, '/digest'))
+            ->view<Action>();
+
+        return $b->seal(warm: true);
+    }
+
+    /**
+     * Register every routed action of `$app` on `$server`.
+     */
+    public static function routes(Container $app, http::Server& $server) : void
+    {
+        foreach ($app->with<Route>() as &$row) {
+            Route $route = $row->meta<Route>();
+            Action $action = $row->fetch<Action>();
+            $server->on($route->method, $route->path, function(http::Request $req) : http::Response {
+                return $action->handle($req);
+            });
+        }
+    }
+}
