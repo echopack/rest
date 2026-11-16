@@ -24,7 +24,7 @@
 #[epm::license: "MIT"]
 #[epm::description: "Resources, transformers and generated, format-agnostic encoding for Echo HTTP services"]
 
-#[requires: "echolang/libjson" { version: "^0.2", source: git "https://github.com/echolang/libjson" }]
+#[requires: "echolang/libjson" { version: "^0.3", source: git "https://github.com/echolang/libjson" }]
 #[requires: "echolang/libhttp" { version: "^0.2", source: git "https://github.com/echolang/libhttp" }]
 #[requires: "echopack/calendar" { version: "^0.1", source: git "https://github.com/echopack/calendar" }]
 

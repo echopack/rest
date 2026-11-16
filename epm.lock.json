@@ -14,24 +14,24 @@
     },
     {
       "name": "echolang/libhttp",
-      "version": "0.2.10",
+      "version": "0.2.11",
       "source": {
         "kind": "git",
         "url": "https://github.com/echolang/libhttp"
       },
-      "rev": "1f4783771bfbee16a14e6392cd1c083ec235e682",
-      "sha256": "722b022628dc143d82d05723948217bbe0f0859287cf8e6880fb4fe8098d3815",
+      "rev": "382feefc608d44a51b6fbee5c9560f86b64c9385",
+      "sha256": "55ae981ca262ea2cf8eeebe437907af386e35bdaba82e15c4f6518f7556fb932",
       "requires": []
     },
     {
       "name": "echolang/libjson",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "source": {
         "kind": "git",
         "url": "https://github.com/echolang/libjson"
       },
-      "rev": "5d101fae678e9e4e4876a42c024d9a5e1f0bad3c",
-      "sha256": "e6479aa739116ca3d921072245058a351a3ca91ab03789c2b104d1fb0fd59f24",
+      "rev": "5d646d796c5ba5c60670231d80ec0f151a7598c6",
+      "sha256": "91bdc6d0a553efc11e46ff1dee29916367679ebb5f3d425b7e317ccf7407ff31",
       "requires": []
     }
   ]
